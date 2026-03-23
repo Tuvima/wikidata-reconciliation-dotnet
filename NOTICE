@@ -1,0 +1,17 @@
+Tuvima.WikidataReconciliation
+Copyright (c) 2026 Tuvima
+
+This library's reconciliation algorithms (dual-search strategy, scoring formula,
+fuzzy matching approach, type checking, and property matching) are based on
+openrefine-wikibase by Antonin Delpeuch, licensed under the MIT License.
+
+  Original repository: https://github.com/wetneb/openrefine-wikibase
+  Academic paper: Antonin Delpeuch. "A survey of OpenRefine reconciliation services."
+                  https://arxiv.org/abs/1906.08092
+
+The nfdi4culture fork informed the configurable Wikibase endpoint support:
+  https://gitlab.com/nfdi4culture/openrefine-reconciliation-services/openrefine-wikibase
+
+This is an independent C# implementation — no code was copied from the original
+Python project. The algorithms were re-implemented from the documented behavior
+and public API specifications.

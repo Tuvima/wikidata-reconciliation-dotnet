@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Tuvima.WikidataReconciliation/Tuvima.WikidataReconciliation.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Tuvima.WikidataReconciliation.Tests/Tuvima.WikidataReconciliation.Tests.csproj" />
+  </Folder>
+</Solution>

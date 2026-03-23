@@ -1,0 +1,25 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.dll
+*.exe
+*.pdb
+*.nupkg
+*.snupkg
+
+## IDE
+.vs/
+.vscode/
+*.sln.docstates
+
+## OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+## Build
+artifacts/
+TestResults/
