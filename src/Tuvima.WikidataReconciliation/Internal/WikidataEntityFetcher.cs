@@ -10,10 +10,10 @@ internal sealed class WikidataEntityFetcher
 {
     private const int MaxIdsPerRequest = 50;
 
-    private readonly HttpClient _httpClient;
+    private readonly ResilientHttpClient _httpClient;
     private readonly WikidataReconcilerOptions _options;
 
-    public WikidataEntityFetcher(HttpClient httpClient, WikidataReconcilerOptions options)
+    public WikidataEntityFetcher(ResilientHttpClient httpClient, WikidataReconcilerOptions options)
     {
         _httpClient = httpClient;
         _options = options;
@@ -27,7 +27,6 @@ internal sealed class WikidataEntityFetcher
     {
         var result = new Dictionary<string, WikidataEntity>(StringComparer.OrdinalIgnoreCase);
 
-        // Batch into groups of 50
         for (var i = 0; i < ids.Count; i += MaxIdsPerRequest)
         {
             var batch = ids.Skip(i).Take(MaxIdsPerRequest).ToList();
@@ -78,11 +77,11 @@ internal sealed class WikidataEntityFetcher
 
     /// <summary>
     /// Extracts claim values for a property, respecting Wikidata rank hierarchy.
-    /// Returns values from preferred-rank claims if any exist, otherwise normal-rank.
-    /// Deprecated-rank claims are excluded.
+    /// Supports chained property paths (e.g., "P131/P17") by resolving the first segment.
     /// </summary>
     public static List<DataValue> GetClaimValues(WikidataEntity entity, string propertyId)
     {
+        // For simple properties, resolve directly
         if (entity.Claims?.TryGetValue(propertyId, out var claims) != true || claims!.Count == 0)
             return [];
 

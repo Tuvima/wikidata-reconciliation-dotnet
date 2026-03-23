@@ -99,9 +99,27 @@ var results = await reconciler.ReconcileAsync(new ReconciliationRequest
 });
 ```
 
+### Property Paths
+
+Chain properties to match against related entities. For example, match a person's country of citizenship via their city of birth:
+
+```csharp
+var results = await reconciler.ReconcileAsync(new ReconciliationRequest
+{
+    Query = "Douglas Adams",
+    Properties =
+    [
+        new PropertyConstraint("P19", "Q350"),   // place of birth: Cambridge (direct)
+        new PropertyConstraint("P19/P17", "Q145"), // place of birth -> country: UK (chained)
+    ]
+});
+```
+
+Property paths use `/` to chain properties. The library resolves each segment by fetching intermediate entities from the API.
+
 ### Batch Reconciliation
 
-Reconcile multiple queries in parallel:
+Reconcile multiple queries with automatic concurrency limiting (default: 5 concurrent requests):
 
 ```csharp
 var results = await reconciler.ReconcileBatchAsync([
@@ -113,6 +131,37 @@ var results = await reconciler.ReconcileBatchAsync([
 // results[0] -> Douglas Adams matches
 // results[1] -> Albert Einstein matches
 // results[2] -> Nineteen Eighty-Four matches
+```
+
+### Streaming Batch Reconciliation
+
+For large datasets, use `ReconcileBatchStreamAsync` to process results as they arrive via `IAsyncEnumerable`. This reduces memory pressure and enables progress reporting:
+
+```csharp
+var requests = LoadThousandsOfRequests();
+var completed = 0;
+
+await foreach (var (index, results) in reconciler.ReconcileBatchStreamAsync(requests))
+{
+    completed++;
+    Console.WriteLine($"[{completed}/{requests.Count}] {requests[index].Query} -> {results[0].Id}");
+    SaveResult(index, results);
+}
+```
+
+### Suggest / Autocomplete
+
+For interactive UIs with type-ahead search:
+
+```csharp
+var suggestions = await reconciler.SuggestAsync("Douglas");
+
+foreach (var s in suggestions)
+    Console.WriteLine($"{s.Id}: {s.Name} - {s.Description}");
+
+// Q42: Douglas Adams - English author and humourist (1952-2001)
+// Q485272: Douglas - city in Georgia, United States
+// ...
 ```
 
 ### Direct QID Lookup
@@ -146,6 +195,30 @@ using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 var results = await reconciler.ReconcileAsync("Douglas Adams", cts.Token);
 ```
 
+### Score Breakdown (Explainability)
+
+Every result includes a detailed `Breakdown` explaining how the score was computed. Use this to build custom trust rules:
+
+```csharp
+var results = await reconciler.ReconcileAsync(new ReconciliationRequest
+{
+    Query = "Douglas Adams",
+    Type = "Q5",
+    Properties = [new PropertyConstraint("P27", "Q145")]
+});
+
+var b = results[0].Breakdown!;
+Console.WriteLine($"Label match:    {b.LabelScore}");        // 100
+Console.WriteLine($"P27 match:      {b.PropertyScores["P27"]}"); // 100
+Console.WriteLine($"Type matched:   {b.TypeMatched}");        // true
+Console.WriteLine($"Weighted score: {b.WeightedScore}");      // 100
+Console.WriteLine($"Type penalty:   {b.TypePenaltyApplied}"); // false
+
+// Custom trust rule: only accept if date of birth is an exact match
+if (b.PropertyScores.TryGetValue("P569", out var dobScore) && dobScore == 100)
+    AcceptMatch(results[0]);
+```
+
 ## Configuration
 
 ```csharp
@@ -170,6 +243,10 @@ var reconciler = new WikidataReconciler(new WikidataReconcilerOptions
     PropertyWeight = 0.4,        // weight for each property match (label match = 1.0)
     AutoMatchThreshold = 95,     // minimum score for auto-match confidence
     AutoMatchScoreGap = 10,      // minimum gap over second-best candidate
+
+    // Resilience (rate limiting & retries)
+    MaxConcurrency = 5,          // max parallel API requests during batch operations
+    MaxRetries = 3,              // retry attempts on HTTP 429 with exponential backoff
 });
 ```
 
@@ -184,6 +261,49 @@ using var reconciler = new WikidataReconciler(httpClient, options);
 ```
 
 When you pass your own `HttpClient`, the reconciler will not dispose it. When the reconciler creates its own (via the parameterless or options-only constructors), it owns and disposes the client.
+
+### Caching
+
+The library deliberately does not include a built-in cache to avoid stale data issues (a [known problem](https://github.com/wetneb/openrefine-wikibase/issues/146) in the upstream Python implementation). Instead, use .NET's standard `HttpClient` middleware pattern to add caching at the HTTP layer:
+
+```csharp
+// Example: in-memory caching via a DelegatingHandler
+public class CachingHandler : DelegatingHandler
+{
+    private readonly IMemoryCache _cache;
+    private readonly TimeSpan _ttl;
+
+    public CachingHandler(IMemoryCache cache, TimeSpan ttl)
+    {
+        _cache = cache;
+        _ttl = ttl;
+    }
+
+    protected override async Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var key = request.RequestUri?.ToString() ?? "";
+        if (_cache.TryGetValue(key, out HttpResponseMessage? cached))
+            return cached!;
+
+        var response = await base.SendAsync(request, cancellationToken);
+        if (response.IsSuccessStatusCode)
+            _cache.Set(key, response, _ttl);
+        return response;
+    }
+}
+
+// Wire it up
+var cache = new MemoryCache(new MemoryCacheOptions());
+var handler = new CachingHandler(cache, TimeSpan.FromMinutes(30))
+{
+    InnerHandler = new HttpClientHandler()
+};
+var httpClient = new HttpClient(handler);
+using var reconciler = new WikidataReconciler(httpClient, options);
+```
+
+This gives you full control over TTL, storage backend, and invalidation strategy.
 
 ### Custom Wikibase Instances
 
@@ -251,6 +371,17 @@ Each `ReconciliationResult` contains:
 | `Score` | `double` | Confidence score from 0 to 100 |
 | `Match` | `bool` | `true` if this is a confident automatic match |
 | `Types` | `IReadOnlyList<string>?` | P31 (instance of) type IDs, if available |
+| `Breakdown` | `ScoreBreakdown?` | Detailed scoring breakdown (see [Score Breakdown](#score-breakdown-explainability)) |
+
+The `ScoreBreakdown` contains:
+
+| Property | Type | Description |
+|---|---|---|
+| `LabelScore` | `double` | Best fuzzy match score across labels/aliases (0-100) |
+| `PropertyScores` | `IReadOnlyDictionary<string, double>` | Per-property match scores, keyed by property ID |
+| `TypeMatched` | `bool?` | Whether entity matched the type constraint (`null` if none) |
+| `WeightedScore` | `double` | Weighted formula result before any type penalty |
+| `TypePenaltyApplied` | `bool` | Whether the score was halved due to missing type |
 
 Results are sorted by score descending, with QID number as a tiebreaker (lower QID = older, more established entity).
 

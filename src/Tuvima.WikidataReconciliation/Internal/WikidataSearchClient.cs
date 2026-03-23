@@ -7,17 +7,15 @@ namespace Tuvima.WikidataReconciliation.Internal;
 /// <summary>
 /// Searches Wikidata using both wbsearchentities (label/alias autocomplete) and
 /// action=query&amp;list=search (full-text search), then merges results.
-/// This dual-search approach ensures items like "1984" (the novel) are found even
-/// when their label doesn't directly match the query.
 /// </summary>
 internal sealed class WikidataSearchClient
 {
     private static readonly Regex QidPattern = new(@"^Q\d+$", RegexOptions.Compiled);
 
-    private readonly HttpClient _httpClient;
+    private readonly ResilientHttpClient _httpClient;
     private readonly WikidataReconcilerOptions _options;
 
-    public WikidataSearchClient(HttpClient httpClient, WikidataReconcilerOptions options)
+    public WikidataSearchClient(ResilientHttpClient httpClient, WikidataReconcilerOptions options)
     {
         _httpClient = httpClient;
         _options = options;
@@ -46,8 +44,7 @@ internal sealed class WikidataSearchClient
         var autocompleteIds = await autocompleteTask.ConfigureAwait(false);
         var fullTextIds = await fullTextTask.ConfigureAwait(false);
 
-        // Merge: full-text results first (finds things like "1984" the novel),
-        // then autocomplete results, deduplicated
+        // Merge: full-text results first, then autocomplete, deduplicated
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var merged = new List<string>();
 
@@ -58,6 +55,21 @@ internal sealed class WikidataSearchClient
         }
 
         return merged;
+    }
+
+    /// <summary>
+    /// Lightweight autocomplete search for type-ahead scenarios.
+    /// Returns label, description, and ID for each match.
+    /// </summary>
+    public async Task<List<WbSearchResult>> SuggestAsync(string prefix, string language, int limit, CancellationToken cancellationToken = default)
+    {
+        var url = $"{_options.ApiEndpoint}?action=wbsearchentities&search={Uri.EscapeDataString(prefix)}" +
+                  $"&language={Uri.EscapeDataString(language)}&limit={limit}&format=json";
+
+        var json = await _httpClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+        var response = JsonSerializer.Deserialize(json, WikidataJsonContext.Default.WbSearchEntitiesResponse);
+
+        return response?.Search ?? [];
     }
 
     private async Task<List<string>> SearchEntitiesAsync(string query, string language, int limit, CancellationToken cancellationToken)

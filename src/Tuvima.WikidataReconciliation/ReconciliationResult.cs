@@ -35,4 +35,10 @@ public sealed class ReconciliationResult
     /// The P31 (instance of) type IDs for this entity, if available.
     /// </summary>
     public IReadOnlyList<string>? Types { get; init; }
+
+    /// <summary>
+    /// Detailed breakdown of how the score was computed.
+    /// Contains individual label, property, and type match scores.
+    /// </summary>
+    public ScoreBreakdown? Breakdown { get; init; }
 }

@@ -40,8 +40,6 @@ public class IntegrationTests : IDisposable
     [Fact]
     public async Task Novel1984_WithType_ShouldFindNovel()
     {
-        // This is the key test case — "1984" needs full-text search to find the novel
-        // Q7725634 = "literary work" (Nineteen Eighty-Four's P31)
         var results = await _reconciler.ReconcileAsync(new ReconciliationRequest
         {
             Query = "1984",
@@ -50,14 +48,12 @@ public class IntegrationTests : IDisposable
         });
 
         Assert.NotEmpty(results);
-        // Q208460 is "Nineteen Eighty-Four" the novel by George Orwell
         Assert.Contains(results, r => r.Id == "Q208460");
     }
 
     [Fact]
     public async Task Novel1984_WithoutType_ShouldFindNovel()
     {
-        // Even without type, dual search should find the novel
         var results = await _reconciler.ReconcileAsync(new ReconciliationRequest
         {
             Query = "1984",
@@ -120,9 +116,67 @@ public class IntegrationTests : IDisposable
 
         Assert.NotEmpty(resultsWithProps);
         Assert.Equal("Q42", resultsWithProps[0].Id);
-
-        // The version with properties should still find Q42
         Assert.Equal("Q42", resultsWithoutProps[0].Id);
+    }
+
+    [Fact]
+    public async Task ScoreBreakdown_ShouldContainLabelAndPropertyScores()
+    {
+        var results = await _reconciler.ReconcileAsync(new ReconciliationRequest
+        {
+            Query = "Douglas Adams",
+            Type = "Q5",
+            Properties =
+            [
+                new PropertyConstraint("P27", "Q145")
+            ]
+        });
+
+        Assert.NotEmpty(results);
+        var breakdown = results[0].Breakdown;
+        Assert.NotNull(breakdown);
+        Assert.True(breakdown.LabelScore > 90, $"Expected label score > 90 but got {breakdown.LabelScore}");
+        Assert.True(breakdown.PropertyScores.ContainsKey("P27"), "Expected P27 in property scores");
+        Assert.Equal(100.0, breakdown.PropertyScores["P27"]);
+        Assert.True(breakdown.TypeMatched);
+        Assert.False(breakdown.TypePenaltyApplied);
+    }
+
+    [Fact]
+    public async Task SuggestAsync_ShouldReturnResults()
+    {
+        var results = await _reconciler.SuggestAsync("Douglas");
+
+        Assert.NotEmpty(results);
+        Assert.Contains(results, r => r.Id == "Q42");
+        Assert.All(results, r =>
+        {
+            Assert.NotEmpty(r.Id);
+            Assert.NotEmpty(r.Name);
+        });
+    }
+
+    [Fact]
+    public async Task ReconcileBatchStreamAsync_ShouldYieldAllResults()
+    {
+        var requests = new List<ReconciliationRequest>
+        {
+            new() { Query = "Douglas Adams" },
+            new() { Query = "United States of America" },
+            new() { Query = "Albert Einstein" }
+        };
+
+        var received = new List<(int Index, IReadOnlyList<ReconciliationResult> Results)>();
+
+        await foreach (var item in _reconciler.ReconcileBatchStreamAsync(requests))
+        {
+            received.Add(item);
+        }
+
+        Assert.Equal(3, received.Count);
+        // All indices should be present (0, 1, 2), though order may vary
+        Assert.Equal([0, 1, 2], received.Select(r => r.Index).OrderBy(i => i));
+        Assert.All(received, r => Assert.NotEmpty(r.Results));
     }
 
     public void Dispose()

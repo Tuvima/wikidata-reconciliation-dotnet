@@ -18,8 +18,9 @@ internal sealed class ReconciliationScorer
 
     /// <summary>
     /// Scores a candidate entity against a reconciliation request.
+    /// Returns both the overall score and a detailed breakdown.
     /// </summary>
-    public double Score(string query, WikidataEntity entity, string language, IReadOnlyList<PropertyConstraint>? properties)
+    public ScoringResult Score(string query, WikidataEntity entity, string language, IReadOnlyList<PropertyConstraint>? properties)
     {
         // Label matching: fuzzy match query against all labels + aliases, take max
         var allLabels = WikidataEntityFetcher.GetAllLabels(entity, language);
@@ -32,13 +33,13 @@ internal sealed class ReconciliationScorer
                 labelScore = score;
         }
 
-        // If no labels found in the requested language, try matching against the entity ID
         if (allLabels.Count == 0)
             labelScore = 0;
 
         var propertyWeight = _options.PropertyWeight;
         var totalWeight = 1.0;
         var weightedSum = labelScore * 1.0;
+        var propertyScores = new Dictionary<string, double>();
 
         // Property matching
         if (properties is { Count: > 0 })
@@ -46,21 +47,32 @@ internal sealed class ReconciliationScorer
             foreach (var prop in properties)
             {
                 var propScore = ScoreProperty(entity, prop);
+                propertyScores[prop.PropertyId] = propScore;
                 weightedSum += propScore * propertyWeight;
                 totalWeight += propertyWeight;
             }
         }
 
-        return weightedSum / totalWeight;
+        var weightedScore = weightedSum / totalWeight;
+
+        return new ScoringResult
+        {
+            Score = weightedScore,
+            LabelScore = labelScore,
+            PropertyScores = propertyScores,
+            WeightedScore = weightedScore
+        };
     }
 
     /// <summary>
     /// Scores a single property constraint against an entity's claims.
-    /// Returns the best match across all claim values for the property.
+    /// Returns the best match across all claim values for the (root) property.
     /// </summary>
     private static int ScoreProperty(WikidataEntity entity, PropertyConstraint constraint)
     {
-        var claimValues = WikidataEntityFetcher.GetClaimValues(entity, constraint.PropertyId);
+        // Use the root property for direct scoring (chained paths are resolved at the orchestrator level)
+        var path = new PropertyPath(constraint.PropertyId);
+        var claimValues = WikidataEntityFetcher.GetClaimValues(entity, path.RootProperty);
 
         if (claimValues.Count == 0)
             return 0;
@@ -68,7 +80,6 @@ internal sealed class ReconciliationScorer
         var bestScore = 0;
         foreach (var claimValue in claimValues)
         {
-            // Determine data type from the claim
             string? dataType = null;
             if (entity.Claims?.TryGetValue(constraint.PropertyId, out var claims) == true)
             {
@@ -85,7 +96,6 @@ internal sealed class ReconciliationScorer
 
     /// <summary>
     /// Determines auto-match status for sorted results.
-    /// A candidate auto-matches if its score exceeds the threshold and has sufficient gap.
     /// </summary>
     public bool IsAutoMatch(double score, double? secondBestScore, int numProperties)
     {
@@ -98,4 +108,12 @@ internal sealed class ReconciliationScorer
 
         return true;
     }
+}
+
+internal sealed record ScoringResult
+{
+    public double Score { get; init; }
+    public double LabelScore { get; init; }
+    public Dictionary<string, double> PropertyScores { get; init; } = new();
+    public double WeightedScore { get; init; }
 }

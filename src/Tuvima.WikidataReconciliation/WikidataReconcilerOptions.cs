@@ -50,4 +50,17 @@ public sealed class WikidataReconcilerOptions
     /// for auto-matching. Default is 10.
     /// </summary>
     public double AutoMatchScoreGap { get; init; } = 10;
+
+    /// <summary>
+    /// Maximum number of concurrent API requests during batch reconciliation.
+    /// Limits parallelism to avoid hitting Wikimedia rate limits.
+    /// Default is 5. Set to 1 for fully sequential processing.
+    /// </summary>
+    public int MaxConcurrency { get; init; } = 5;
+
+    /// <summary>
+    /// Number of retry attempts when the API returns HTTP 429 (Too Many Requests).
+    /// Uses exponential backoff (1s, 2s, 4s, ...). Default is 3.
+    /// </summary>
+    public int MaxRetries { get; init; } = 3;
 }
