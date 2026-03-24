@@ -318,6 +318,79 @@ public sealed class WikidataReconciler : IDisposable
         return result;
     }
 
+    // ─── Wikipedia Summaries ──────────────────────────────────────
+
+    /// <summary>
+    /// Fetches Wikipedia article summaries for the given QIDs.
+    /// Uses the Wikipedia REST API to extract the first paragraph, description, and thumbnail.
+    /// Only returns summaries for entities that have a Wikipedia article in the requested language.
+    /// </summary>
+    public async Task<IReadOnlyList<WikipediaSummary>> GetWikipediaSummariesAsync(
+        IReadOnlyList<string> qids, string language = "en", CancellationToken cancellationToken = default)
+    {
+        // First resolve QIDs to Wikipedia article titles via sitelinks
+        var entities = await _entityFetcher.FetchEntitiesWithSitelinksAsync(qids, language, cancellationToken)
+            .ConfigureAwait(false);
+
+        var siteKey = $"{language}wiki";
+        var titleToQid = new Dictionary<string, string>();
+
+        foreach (var (id, entity) in entities)
+        {
+            if (entity.Sitelinks?.TryGetValue(siteKey, out var sitelink) == true &&
+                !string.IsNullOrEmpty(sitelink.Title))
+            {
+                titleToQid[sitelink.Title] = id;
+            }
+        }
+
+        if (titleToQid.Count == 0)
+            return [];
+
+        // Fetch summaries from Wikipedia REST API concurrently (respecting concurrency limit)
+        // Note: uses raw HttpClient, not ResilientHttpClient, because Wikipedia REST API
+        // is a different service that doesn't support the maxlag parameter.
+        var results = new List<WikipediaSummary>();
+
+        var tasks = titleToQid.Select(async kvp =>
+        {
+            await _concurrencyLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var url = $"https://{language}.wikipedia.org/api/rest_v1/page/summary/{Uri.EscapeDataString(kvp.Key)}";
+                var json = await _httpClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+                var response = System.Text.Json.JsonSerializer.Deserialize(json,
+                    Internal.Json.WikidataJsonContext.Default.WikipediaSummaryResponse);
+
+                if (response is not null && !string.IsNullOrEmpty(response.Extract))
+                {
+                    return new WikipediaSummary
+                    {
+                        EntityId = kvp.Value,
+                        Title = response.Title,
+                        Extract = response.Extract,
+                        Description = response.Description,
+                        ThumbnailUrl = response.Thumbnail?.Source,
+                        ArticleUrl = response.ContentUrls?.Desktop?.Page
+                            ?? $"https://{language}.wikipedia.org/wiki/{Uri.EscapeDataString(kvp.Key)}"
+                    };
+                }
+            }
+            catch
+            {
+                // Skip entities whose Wikipedia summary fails to fetch
+            }
+            finally
+            {
+                _concurrencyLimiter.Release();
+            }
+            return null;
+        });
+
+        var fetched = await Task.WhenAll(tasks).ConfigureAwait(false);
+        return fetched.Where(s => s is not null).ToList()!;
+    }
+
     // ─── Reverse Lookup by External ID ────────────────────────────
 
     /// <summary>

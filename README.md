@@ -230,6 +230,28 @@ var deUrls = await reconciler.GetWikipediaUrlsAsync(["Q42"], "de");
 
 Only returns URLs for entities that actually have a Wikipedia article in the requested language.
 
+### Wikipedia Summaries
+
+Fetch article summaries (first paragraph, description, thumbnail) from Wikipedia:
+
+```csharp
+var summaries = await reconciler.GetWikipediaSummariesAsync(["Q42", "Q937"]);
+
+foreach (var s in summaries)
+{
+    Console.WriteLine($"{s.Title}: {s.Extract}");
+    Console.WriteLine($"  Thumbnail: {s.ThumbnailUrl}");
+    Console.WriteLine($"  Read more: {s.ArticleUrl}");
+}
+// Douglas Adams: Douglas Noël Adams was an English author, humourist, and screenwriter...
+```
+
+Supports any Wikipedia language edition:
+
+```csharp
+var deSummaries = await reconciler.GetWikipediaSummariesAsync(["Q42"], "de");
+```
+
 ### Reverse Lookup by External ID
 
 Find a Wikidata entity by its ISBN, IMDB ID, ORCID, or any other external identifier — no fuzzy matching needed:

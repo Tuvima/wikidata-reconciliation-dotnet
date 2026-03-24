@@ -404,6 +404,31 @@ public class IntegrationTests : IDisposable
         Assert.Contains("Special:FilePath", url);
     }
 
+    // ─── Wikipedia Summaries ──────────────────────────────────────
+
+    [Fact]
+    public async Task GetWikipediaSummariesAsync_ShouldReturnSummary()
+    {
+        var summaries = await _reconciler.GetWikipediaSummariesAsync(["Q42"]);
+
+        Assert.NotEmpty(summaries);
+        var summary = summaries.First(s => s.EntityId == "Q42");
+        Assert.Equal("Q42", summary.EntityId);
+        Assert.Contains("Douglas Adams", summary.Title);
+        Assert.False(string.IsNullOrEmpty(summary.Extract));
+        Assert.Contains("wikipedia.org", summary.ArticleUrl);
+    }
+
+    [Fact]
+    public async Task GetWikipediaSummariesAsync_German_ShouldReturnDeSummary()
+    {
+        var summaries = await _reconciler.GetWikipediaSummariesAsync(["Q42"], "de");
+
+        Assert.NotEmpty(summaries);
+        Assert.Equal("Q42", summaries[0].EntityId);
+        Assert.False(string.IsNullOrEmpty(summaries[0].Extract));
+    }
+
     // ─── Entity Change Monitoring ───────────────────────────────────
 
     [Fact]

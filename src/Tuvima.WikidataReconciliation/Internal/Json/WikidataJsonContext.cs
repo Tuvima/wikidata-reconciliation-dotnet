@@ -6,6 +6,7 @@ namespace Tuvima.WikidataReconciliation.Internal.Json;
 [JsonSerializable(typeof(QuerySearchResponse))]
 [JsonSerializable(typeof(WbGetEntitiesResponse))]
 [JsonSerializable(typeof(RecentChangesResponse))]
+[JsonSerializable(typeof(WikipediaSummaryResponse))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.Unspecified,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
