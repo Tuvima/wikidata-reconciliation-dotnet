@@ -31,6 +31,17 @@ internal sealed class WikidataEntityFetcher
     }
 
     /// <summary>
+    /// Fetches entities with labels and aliases in ALL languages (no language filter).
+    /// Used by the reconciliation pipeline so cross-language label matching works.
+    /// </summary>
+    public async Task<Dictionary<string, WikidataEntity>> FetchEntitiesAllLanguagesAsync(
+        IReadOnlyList<string> ids, CancellationToken cancellationToken = default)
+    {
+        return await FetchInBatchesAsync(ids, null, "labels|descriptions|aliases|claims", cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Fetches entities with sitelinks only (lightweight, for Wikipedia URL resolution).
     /// </summary>
     public async Task<Dictionary<string, WikidataEntity>> FetchEntitiesWithSitelinksAsync(
@@ -41,7 +52,7 @@ internal sealed class WikidataEntityFetcher
     }
 
     private async Task<Dictionary<string, WikidataEntity>> FetchInBatchesAsync(
-        IReadOnlyList<string> ids, string language, string props, CancellationToken cancellationToken)
+        IReadOnlyList<string> ids, string? language, string props, CancellationToken cancellationToken)
     {
         var result = new Dictionary<string, WikidataEntity>(StringComparer.OrdinalIgnoreCase);
 
@@ -58,13 +69,17 @@ internal sealed class WikidataEntityFetcher
     }
 
     private async Task<Dictionary<string, WikidataEntity>> FetchBatchAsync(
-        List<string> ids, string language, string props, CancellationToken cancellationToken)
+        List<string> ids, string? language, string props, CancellationToken cancellationToken)
     {
         var idsParam = string.Join('|', ids);
-        var languageParam = LanguageFallback.BuildLanguageParam(language);
         var url = $"{_options.ApiEndpoint}?action=wbgetentities&ids={Uri.EscapeDataString(idsParam)}" +
-                  $"&languages={Uri.EscapeDataString(languageParam)}&format=json" +
-                  $"&props={Uri.EscapeDataString(props)}";
+                  $"&format=json&props={Uri.EscapeDataString(props)}";
+
+        if (language is not null)
+        {
+            var languageParam = LanguageFallback.BuildLanguageParam(language);
+            url += $"&languages={Uri.EscapeDataString(languageParam)}";
+        }
 
         var json = await _httpClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
         var response = JsonSerializer.Deserialize(json, WikidataJsonContext.Default.WbGetEntitiesResponse);
@@ -91,6 +106,41 @@ internal sealed class WikidataEntityFetcher
             {
                 if (!string.IsNullOrEmpty(alias.Value))
                     labels.Add(alias.Value);
+            }
+        }
+
+        return labels;
+    }
+
+    /// <summary>
+    /// Extracts all labels and aliases across ALL languages for cross-language scoring.
+    /// Returns deduplicated label strings from every available language.
+    /// </summary>
+    public static List<string> GetAllLabelsAllLanguages(WikidataEntity entity)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var labels = new List<string>();
+
+        // All labels across every language
+        if (entity.Labels is not null)
+        {
+            foreach (var lv in entity.Labels.Values)
+            {
+                if (!string.IsNullOrEmpty(lv.Value) && seen.Add(lv.Value))
+                    labels.Add(lv.Value);
+            }
+        }
+
+        // All aliases across every language
+        if (entity.Aliases is not null)
+        {
+            foreach (var aliasList in entity.Aliases.Values)
+            {
+                foreach (var alias in aliasList)
+                {
+                    if (!string.IsNullOrEmpty(alias.Value) && seen.Add(alias.Value))
+                        labels.Add(alias.Value);
+                }
             }
         }
 

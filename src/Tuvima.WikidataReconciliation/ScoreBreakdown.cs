@@ -7,9 +7,15 @@ namespace Tuvima.WikidataReconciliation;
 public sealed class ScoreBreakdown
 {
     /// <summary>
-    /// The label/alias match score (0-100). Best fuzzy match across all labels and aliases.
+    /// The label/alias match score (0-100). Best fuzzy match across all labels and aliases in all languages.
     /// </summary>
     public double LabelScore { get; init; }
+
+    /// <summary>
+    /// The label or alias text that produced the best fuzzy match.
+    /// Null when no labels or aliases exist for the entity.
+    /// </summary>
+    public string? MatchedLabel { get; init; }
 
     /// <summary>
     /// Individual property match scores, keyed by property ID.

@@ -96,8 +96,8 @@ public sealed class WikidataReconciler : IDisposable
         if (candidateIds.Count == 0)
             return [];
 
-        // Step 2: Fetch entity data
-        var entities = await _entityFetcher.FetchEntitiesAsync(candidateIds, language, cancellationToken)
+        // Step 2: Fetch entity data (all languages for cross-language label scoring)
+        var entities = await _entityFetcher.FetchEntitiesAllLanguagesAsync(candidateIds, cancellationToken)
             .ConfigureAwait(false);
 
         // Step 3: Score and filter candidates
@@ -158,9 +158,11 @@ public sealed class WikidataReconciler : IDisposable
                 Score = Math.Round(scoring.Score, 2),
                 Match = i == 0 && (scoring.UniqueIdMatch || _scorer.IsAutoMatch(scoring.Score, secondBest, numProperties)),
                 Types = types.Count > 0 ? types : null,
+                MatchedLabel = scoring.MatchedLabel,
                 Breakdown = new ScoreBreakdown
                 {
                     LabelScore = scoring.LabelScore,
+                    MatchedLabel = scoring.MatchedLabel,
                     PropertyScores = scoring.PropertyScores,
                     TypeMatched = string.IsNullOrEmpty(request.Type) ? null : typeResult == TypeMatchResult.Matched,
                     WeightedScore = Math.Round(scoring.WeightedScore, 2),

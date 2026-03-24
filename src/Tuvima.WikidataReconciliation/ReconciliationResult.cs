@@ -37,6 +37,13 @@ public sealed class ReconciliationResult
     public IReadOnlyList<string>? Types { get; init; }
 
     /// <summary>
+    /// The label or alias text that produced the best fuzzy match against the query.
+    /// May differ from <see cref="Name"/> when the query matches a foreign-language label or alias.
+    /// For example, searching "Die Verwandlung" returns Name="The Metamorphosis" with MatchedLabel="Die Verwandlung".
+    /// </summary>
+    public string? MatchedLabel { get; init; }
+
+    /// <summary>
     /// Detailed breakdown of how the score was computed.
     /// Contains individual label, property, and type match scores.
     /// </summary>

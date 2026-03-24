@@ -22,15 +22,19 @@ internal sealed class ReconciliationScorer
     /// </summary>
     public ScoringResult Score(string query, WikidataEntity entity, string language, IReadOnlyList<PropertyConstraint>? properties)
     {
-        // Label matching: fuzzy match query against all labels + aliases, take max
-        var allLabels = WikidataEntityFetcher.GetAllLabels(entity, language);
+        // Label matching: fuzzy match query against all labels + aliases across ALL languages, take max
+        var allLabels = WikidataEntityFetcher.GetAllLabelsAllLanguages(entity);
         var labelScore = 0;
+        string? matchedLabel = null;
 
         foreach (var label in allLabels)
         {
             var score = FuzzyMatcher.TokenSortRatio(query, label);
             if (score > labelScore)
+            {
                 labelScore = score;
+                matchedLabel = label;
+            }
         }
 
         if (allLabels.Count == 0)
@@ -67,6 +71,7 @@ internal sealed class ReconciliationScorer
                     {
                         Score = 100,
                         LabelScore = labelScore,
+                        MatchedLabel = matchedLabel,
                         PropertyScores = propertyScores,
                         WeightedScore = weightedScore,
                         UniqueIdMatch = true
@@ -79,6 +84,7 @@ internal sealed class ReconciliationScorer
         {
             Score = weightedScore,
             LabelScore = labelScore,
+            MatchedLabel = matchedLabel,
             PropertyScores = propertyScores,
             WeightedScore = weightedScore
         };
@@ -134,6 +140,7 @@ internal sealed record ScoringResult
 {
     public double Score { get; init; }
     public double LabelScore { get; init; }
+    public string? MatchedLabel { get; init; }
     public Dictionary<string, double> PropertyScores { get; init; } = new();
     public double WeightedScore { get; init; }
     public bool UniqueIdMatch { get; init; }
