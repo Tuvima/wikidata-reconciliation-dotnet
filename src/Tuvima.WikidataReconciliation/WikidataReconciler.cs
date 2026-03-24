@@ -47,7 +47,7 @@ public sealed class WikidataReconciler : IDisposable
         _ownsHttpClient = ownsHttpClient;
         _options = options;
 
-        var resilientClient = new ResilientHttpClient(httpClient, options.MaxRetries);
+        var resilientClient = new ResilientHttpClient(httpClient, options.MaxRetries, options.MaxLag);
         _searchClient = new WikidataSearchClient(resilientClient, options);
         _entityFetcher = new WikidataEntityFetcher(resilientClient, options);
         _scorer = new ReconciliationScorer(options);
@@ -429,7 +429,7 @@ public sealed class WikidataReconciler : IDisposable
                   $"&rcstart={rcStart}&rcdir=newer&rclimit=500" +
                   "&rcprop=title|timestamp|user|comment|ids&rctype=edit|new&format=json";
 
-        var resilientClient = new Internal.ResilientHttpClient(_httpClient, _options.MaxRetries);
+        var resilientClient = new Internal.ResilientHttpClient(_httpClient, _options.MaxRetries, _options.MaxLag);
         var json = await resilientClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
         var response = System.Text.Json.JsonSerializer.Deserialize(json,
             Internal.Json.WikidataJsonContext.Default.RecentChangesResponse);

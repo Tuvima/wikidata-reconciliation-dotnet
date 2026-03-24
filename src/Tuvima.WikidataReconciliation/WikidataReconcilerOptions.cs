@@ -65,6 +65,14 @@ public sealed class WikidataReconcilerOptions
     public int MaxRetries { get; init; } = 3;
 
     /// <summary>
+    /// The maxlag parameter sent with every API request (Wikimedia bot etiquette).
+    /// If the server is lagging more than this many seconds, it returns a 429 response
+    /// instead of processing the request. Default is 5 seconds.
+    /// Set to 0 to disable. See https://www.mediawiki.org/wiki/Manual:Maxlag_parameter
+    /// </summary>
+    public int MaxLag { get; init; } = 5;
+
+    /// <summary>
     /// Maximum depth for P279 (subclass of) hierarchy walking during type checking.
     /// Default is 0 (direct P31 match only — fast, no extra API calls).
     /// Set to a positive value (e.g., 5) to walk superclasses and improve type recall.
