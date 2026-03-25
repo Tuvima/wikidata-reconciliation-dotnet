@@ -23,6 +23,7 @@ This is the first .NET Wikidata reconciliation library, filling a gap in the eco
 | An ISBN or IMDB ID | The matching Wikidata entity, without fuzzy matching |
 | A list of 10,000 names | Parallel batch processing with progress streaming |
 | A prefix like "Doug..." | Autocomplete suggestions for interactive UIs |
+| Cached entity data | Lightweight staleness check — only re-fetch what actually changed |
 
 ## What is Reconciliation?
 
@@ -314,9 +315,30 @@ var coords = entity.Claims["P625"][0].Value!;
 Console.WriteLine(coords.ToDisplayString()); // "51.5074, -0.1278"
 ```
 
+### Staleness Detection
+
+Every entity fetch includes revision metadata for free — use it to detect when cached data is outdated:
+
+```csharp
+// Initial fetch — LastRevisionId and Modified come automatically
+var entities = await reconciler.GetEntitiesAsync(["Q42", "Q5"]);
+var cached = entities.ToDictionary(e => e.Key, e => (Entity: e.Value, Rev: e.Value.LastRevisionId));
+
+// Later — one ultra-lightweight call checks all entities at once (no labels/claims fetched)
+var currentRevs = await reconciler.GetRevisionIdsAsync(cached.Keys.ToList());
+var stale = currentRevs.Where(r => cached[r.Key].Rev != r.Value.RevisionId).ToList();
+
+// Only re-fetch the ones that actually changed
+if (stale.Count > 0)
+{
+    var refreshed = await reconciler.GetEntitiesAsync(stale.Select(s => s.Key).ToList());
+    // update cache with refreshed entities...
+}
+```
+
 ### Entity Change Monitoring
 
-Check if watched entities have been modified recently (useful for cache invalidation):
+Get detailed edit history for watched entities (useful for audit logs or understanding what changed):
 
 ```csharp
 var changes = await reconciler.GetRecentChangesAsync(
@@ -618,6 +640,10 @@ The `ScoreBreakdown` contains:
 Results are sorted by score descending, with QID number as a tiebreaker (lower QID = older, more established entity).
 
 ## What's New by Version
+
+### v0.5.0
+
+- **Staleness detection** — `WikidataEntityInfo` now includes `LastRevisionId` and `Modified` on every entity fetch (zero extra API calls). New `GetRevisionIdsAsync` method provides an ultra-lightweight way to check if cached entities have changed — returns only revision IDs and timestamps without fetching labels, claims, or descriptions.
 
 ### v0.4.0
 

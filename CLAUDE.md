@@ -44,9 +44,10 @@ src/
 │   ├── ScoreBreakdown.cs                    # LabelScore, PropertyScores, TypeMatched, UniqueIdMatch
 │   ├── SuggestResult.cs                     # Id, Name, Description
 │   ├── PropertyConstraint.cs                # PropertyId, Value
-│   ├── WikidataEntityInfo.cs                # Id, Label, Description, Aliases, Claims
+│   ├── WikidataEntityInfo.cs                # Id, Label, Description, Aliases, Claims, LastRevisionId, Modified
 │   ├── WikidataClaim.cs                     # PropertyId, Rank, Value, Qualifiers, QualifierOrder
 │   ├── WikidataValue.cs                     # Kind, RawValue, EntityId, Time, Quantity, Coords + ToDisplayString()
+│   ├── EntityRevision.cs                    # EntityId, RevisionId, Timestamp (lightweight staleness check)
 │   ├── EntityChange.cs                      # EntityId, ChangeType, Timestamp, User, Comment, RevisionId
 │   ├── WikipediaSummary.cs                  # EntityId, Title, Extract, Description, ThumbnailUrl, ArticleUrl
 │   └── Internal/
@@ -66,6 +67,7 @@ src/
 │           ├── WbSearchEntitiesResponse.cs   # wbsearchentities API response
 │           ├── WbGetEntitiesResponse.cs      # wbgetentities API response (claims, qualifiers, sitelinks)
 │           ├── QuerySearchResponse.cs        # Full-text search API response
+│           ├── RevisionQueryResponse.cs       # Revision query API response (staleness detection)
 │           ├── RecentChangesResponse.cs      # Recent changes API response
 │           └── WikipediaSummaryResponse.cs   # Wikipedia REST API response
 ├── Tuvima.WikidataReconciliation.AspNetCore/ # ASP.NET Core companion
@@ -101,7 +103,8 @@ tests/
 | `LookupByExternalIdAsync(propertyId, value)` | Find entity by ISBN/IMDB/VIAF/ORCID via haswbstatement |
 | `GetPropertyLabelsAsync(propertyIds)` | P569 → "date of birth" |
 | `GetImageUrlsAsync(qids)` | Wikimedia Commons image URLs from P18 claims |
-| `GetRecentChangesAsync(qids, since)` | Entity change monitoring for cache invalidation |
+| `GetRevisionIdsAsync(qids)` | Lightweight staleness check — returns only revision IDs and timestamps |
+| `GetRecentChangesAsync(qids, since)` | Detailed entity change history for audit/monitoring |
 
 ### Configuration Options (WikidataReconcilerOptions)
 
