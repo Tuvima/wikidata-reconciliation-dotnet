@@ -514,6 +514,63 @@ public sealed class WikidataReconciler : IDisposable
         return result;
     }
 
+    // ─── Staleness Detection ────────────────────────────────────────
+
+    /// <summary>
+    /// Gets the current revision IDs for the specified entities. This is an ultra-lightweight API call
+    /// that returns only revision IDs and timestamps — no labels, descriptions, or claims.
+    /// Compare with <see cref="WikidataEntityInfo.LastRevisionId"/> to detect stale cached data.
+    /// </summary>
+    /// <param name="qids">Entity IDs to check (e.g., ["Q42", "Q5"]).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A dictionary mapping entity IDs to their current revision metadata.</returns>
+    public async Task<IReadOnlyDictionary<string, EntityRevision>> GetRevisionIdsAsync(
+        IReadOnlyList<string> qids, CancellationToken cancellationToken = default)
+    {
+        if (qids.Count == 0)
+            return new Dictionary<string, EntityRevision>();
+
+        var result = new Dictionary<string, EntityRevision>(StringComparer.OrdinalIgnoreCase);
+
+        // Batch in groups of 50 (same limit as wbgetentities)
+        for (var i = 0; i < qids.Count; i += 50)
+        {
+            var batch = qids.Skip(i).Take(50).ToList();
+            var titles = string.Join('|', batch);
+
+            var url = $"{_options.ApiEndpoint}?action=query&prop=revisions" +
+                      $"&titles={Uri.EscapeDataString(titles)}&rvprop=ids|timestamp&format=json";
+
+            var resilientClient = new ResilientHttpClient(_httpClient, _options.MaxRetries, _options.MaxLag);
+            var json = await resilientClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            var response = System.Text.Json.JsonSerializer.Deserialize(json,
+                WikidataJsonContext.Default.RevisionQueryResponse);
+
+            if (response?.Query?.Pages is null)
+                continue;
+
+            foreach (var page in response.Query.Pages.Values)
+            {
+                if (page.Revisions is not { Count: > 0 })
+                    continue;
+
+                var rev = page.Revisions[0];
+                DateTimeOffset? timestamp = null;
+                if (!string.IsNullOrEmpty(rev.Timestamp) && DateTimeOffset.TryParse(rev.Timestamp, out var ts))
+                    timestamp = ts;
+
+                result[page.Title] = new EntityRevision
+                {
+                    EntityId = page.Title,
+                    RevisionId = rev.RevId,
+                    Timestamp = timestamp
+                };
+            }
+        }
+
+        return result;
+    }
+
     // ─── Entity Change Monitoring ─────────────────────────────────
 
     /// <summary>

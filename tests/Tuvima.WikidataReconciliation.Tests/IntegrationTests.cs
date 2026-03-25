@@ -458,6 +458,57 @@ public class IntegrationTests : IDisposable
         Assert.False(string.IsNullOrEmpty(summaries[0].Extract));
     }
 
+    // ─── Staleness Detection ────────────────────────────────────────
+
+    [Fact]
+    public async Task GetEntitiesAsync_ShouldIncludeRevisionMetadata()
+    {
+        var entities = await _reconciler.GetEntitiesAsync(["Q42"]);
+
+        Assert.True(entities.ContainsKey("Q42"));
+        var entity = entities["Q42"];
+        Assert.True(entity.LastRevisionId > 0, "LastRevisionId should be populated");
+        Assert.NotNull(entity.Modified);
+        Assert.True(entity.Modified > new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            "Modified date should be reasonable");
+    }
+
+    [Fact]
+    public async Task GetRevisionIdsAsync_ShouldReturnRevisions()
+    {
+        var revisions = await _reconciler.GetRevisionIdsAsync(["Q42", "Q5"]);
+
+        Assert.True(revisions.Count == 2, $"Expected 2 revisions but got {revisions.Count}");
+        Assert.True(revisions.ContainsKey("Q42"));
+        Assert.True(revisions.ContainsKey("Q5"));
+
+        var q42 = revisions["Q42"];
+        Assert.Equal("Q42", q42.EntityId);
+        Assert.True(q42.RevisionId > 0);
+        Assert.NotNull(q42.Timestamp);
+    }
+
+    [Fact]
+    public async Task GetRevisionIdsAsync_ShouldMatchEntityRevisions()
+    {
+        // Verify that revision IDs from both APIs agree
+        var entities = await _reconciler.GetEntitiesAsync(["Q42"]);
+        var revisions = await _reconciler.GetRevisionIdsAsync(["Q42"]);
+
+        // They may not be identical if an edit happened between calls,
+        // but the revision API should return >= the entity fetch revision
+        Assert.True(revisions["Q42"].RevisionId >= entities["Q42"].LastRevisionId,
+            "Revision ID from lightweight check should be >= entity fetch revision");
+    }
+
+    [Fact]
+    public async Task GetRevisionIdsAsync_EmptyInput_ShouldReturnEmpty()
+    {
+        var revisions = await _reconciler.GetRevisionIdsAsync([]);
+
+        Assert.Empty(revisions);
+    }
+
     // ─── Entity Change Monitoring ───────────────────────────────────
 
     [Fact]

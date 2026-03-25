@@ -33,6 +33,12 @@ internal sealed class WikidataEntity
 
     [JsonPropertyName("sitelinks")]
     public Dictionary<string, SiteLink>? Sitelinks { get; set; }
+
+    [JsonPropertyName("lastrevid")]
+    public long LastRevId { get; set; }
+
+    [JsonPropertyName("modified")]
+    public string? Modified { get; set; }
 }
 
 internal sealed class LanguageValue

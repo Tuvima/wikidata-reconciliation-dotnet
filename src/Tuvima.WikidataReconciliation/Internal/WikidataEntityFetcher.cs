@@ -26,7 +26,7 @@ internal sealed class WikidataEntityFetcher
     public async Task<Dictionary<string, WikidataEntity>> FetchEntitiesAsync(
         IReadOnlyList<string> ids, string language, CancellationToken cancellationToken = default)
     {
-        return await FetchInBatchesAsync(ids, language, "labels|descriptions|aliases|claims", cancellationToken)
+        return await FetchInBatchesAsync(ids, language, "info|labels|descriptions|aliases|claims", cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -37,7 +37,7 @@ internal sealed class WikidataEntityFetcher
     public async Task<Dictionary<string, WikidataEntity>> FetchEntitiesAllLanguagesAsync(
         IReadOnlyList<string> ids, CancellationToken cancellationToken = default)
     {
-        return await FetchInBatchesAsync(ids, null, "labels|descriptions|aliases|claims", cancellationToken)
+        return await FetchInBatchesAsync(ids, null, "info|labels|descriptions|aliases|claims", cancellationToken)
             .ConfigureAwait(false);
     }
 

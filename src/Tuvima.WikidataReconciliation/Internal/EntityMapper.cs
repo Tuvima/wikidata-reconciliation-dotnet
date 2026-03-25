@@ -33,13 +33,19 @@ internal static class EntityMapper
             }
         }
 
+        DateTimeOffset? modified = null;
+        if (!string.IsNullOrEmpty(entity.Modified) && DateTimeOffset.TryParse(entity.Modified, out var parsedModified))
+            modified = parsedModified;
+
         return new WikidataEntityInfo
         {
             Id = entity.Id,
             Label = string.IsNullOrEmpty(label) ? null : label,
             Description = string.IsNullOrEmpty(description) ? null : description,
             Aliases = aliases,
-            Claims = MapClaims(entity.Claims)
+            Claims = MapClaims(entity.Claims),
+            LastRevisionId = entity.LastRevId,
+            Modified = modified
         };
     }
 
