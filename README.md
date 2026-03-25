@@ -1,8 +1,8 @@
 # Tuvima.WikidataReconciliation
 
-A .NET library that connects your data to [Wikidata](https://www.wikidata.org/), the world's largest open knowledge base. It matches text (names, titles, places) to Wikidata entities, then lets you pull back structured data like dates, identifiers, images, and Wikipedia links.
+A .NET library that connects your data to [Wikidata](https://www.wikidata.org/) and [Wikipedia](https://www.wikipedia.org/). It matches text (names, titles, places) to Wikidata entities, pulls back structured data like dates, identifiers, and images, and retrieves Wikipedia article content — summaries, section listings, and full section text.
 
-**In plain English:** You have a spreadsheet with author names, book titles, or company names. This library figures out which Wikidata item each one refers to, gives you a confidence score, and then lets you enrich your data with everything Wikidata knows about those entities — birth dates, nationalities, ISBN numbers, profile images, and more.
+**In plain English:** You have a spreadsheet with author names, book titles, or company names. This library figures out which Wikidata item each one refers to, gives you a confidence score, and then lets you enrich your data with everything Wikidata and Wikipedia know about those entities — birth dates, nationalities, ISBN numbers, profile images, plot summaries, biographical details, and more.
 
 This is the first .NET Wikidata reconciliation library, filling a gap in the ecosystem where only Python and JavaScript implementations previously existed.
 
@@ -12,6 +12,7 @@ This is the first .NET Wikidata reconciliation library, filling a gap in the eco
 - **App developers** building search, autocomplete, or knowledge-powered features
 - **Library/archive systems** matching catalog records to authority files (VIAF, ISNI, LoC)
 - **Research teams** enriching study data with Wikidata's 100M+ items
+- **Content platforms** pulling plot summaries, biographies, or descriptions from Wikipedia
 - **Anyone** who needs to go from messy text to structured, linked data
 
 ## What Can It Do?
@@ -20,6 +21,7 @@ This is the first .NET Wikidata reconciliation library, filling a gap in the eco
 |---|---|
 | A name like "Douglas Adams" | The Wikidata ID (Q42), confidence score, and auto-match flag |
 | A matched entity (Q42) | Date of birth, nationality, works, identifiers, Wikipedia link, profile image |
+| A Wikipedia article | Section table of contents, and any section's content as plain text |
 | An ISBN or IMDB ID | The matching Wikidata entity, without fuzzy matching |
 | A list of 10,000 names | Parallel batch processing with progress streaming |
 | A prefix like "Doug..." | Autocomplete suggestions for interactive UIs |
