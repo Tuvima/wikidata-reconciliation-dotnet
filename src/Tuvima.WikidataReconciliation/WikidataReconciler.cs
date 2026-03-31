@@ -89,16 +89,83 @@ public sealed class WikidataReconciler : IDisposable
         var language = request.Language ?? _options.Language;
         var limit = request.Limit > 0 ? request.Limit : 5;
 
+        // Apply query cleaners (cleaned text for search, original for scoring)
+        var searchQuery = request.Query;
+        if (request.Cleaners is { Count: > 0 })
+        {
+            foreach (var cleaner in request.Cleaners)
+                searchQuery = cleaner(searchQuery);
+
+            if (string.IsNullOrWhiteSpace(searchQuery))
+                searchQuery = request.Query; // Fall back to original if cleaners emptied it
+        }
+
+        // Resolve effective types: Types takes precedence over Type
+        var effectiveTypes = request.Types is { Count: > 0 }
+            ? request.Types
+            : (!string.IsNullOrEmpty(request.Type) ? new[] { request.Type } : null);
+        var hasTypeConstraint = effectiveTypes is { Count: > 0 };
+
+        // Resolve per-request subclass resolver
+        var subclassResolver = _subclassResolver;
+        if (request.TypeHierarchyDepth.HasValue && request.TypeHierarchyDepth.Value > 0 && _subclassResolver == null)
+        {
+            // Create a temporary resolver for this request
+            subclassResolver = new SubclassResolver(_entityFetcher, request.TypeHierarchyDepth.Value);
+        }
+        var subclassDepth = request.TypeHierarchyDepth ?? _options.TypeHierarchyDepth;
+
         // Step 1: Search for candidate entity IDs
-        var candidateIds = await _searchClient.SearchAsync(request.Query, language, limit, cancellationToken)
-            .ConfigureAwait(false);
+        var useMultiLanguage = request.Languages is { Count: > 1 };
+        var searchTasks = new List<Task<List<string>>>();
+
+        // Primary search (single or multi-language)
+        if (useMultiLanguage)
+        {
+            searchTasks.Add(_searchClient.SearchMultiLanguageAsync(searchQuery, request.Languages!,
+                limit, request.DiacriticInsensitive, cancellationToken));
+        }
+        else
+        {
+            searchTasks.Add(_searchClient.SearchAsync(searchQuery, language, limit,
+                request.DiacriticInsensitive, cancellationToken));
+        }
+
+        // Type-filtered CirrusSearch for better recall when types are specified
+        if (hasTypeConstraint)
+        {
+            searchTasks.Add(_searchClient.SearchWithTypeFilterAsync(
+                searchQuery, language, effectiveTypes!, limit, cancellationToken));
+        }
+
+        await Task.WhenAll(searchTasks).ConfigureAwait(false);
+
+        // Merge: type-filtered results first (if present), then primary search, deduplicated
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var candidateIds = new List<string>();
+
+        if (hasTypeConstraint)
+        {
+            // Type-filtered results first for better type recall
+            foreach (var id in await searchTasks[^1].ConfigureAwait(false))
+            {
+                if (seen.Add(id))
+                    candidateIds.Add(id);
+            }
+        }
+
+        foreach (var id in await searchTasks[0].ConfigureAwait(false))
+        {
+            if (seen.Add(id))
+                candidateIds.Add(id);
+        }
 
         if (candidateIds.Count == 0)
             return [];
 
         // Step 2: Fetch entity data (all languages for cross-language label scoring)
-        var entities = await _entityFetcher.FetchEntitiesAllLanguagesAsync(candidateIds, cancellationToken)
-            .ConfigureAwait(false);
+        var entities = await _entityFetcher.FetchEntitiesAllLanguagesAsync(
+            candidateIds, _options.IncludeSitelinkLabels, cancellationToken).ConfigureAwait(false);
 
         // Step 3: Score and filter candidates
         var scored = new List<(string Id, WikidataEntity Entity, ScoringResult Scoring, List<string> Types, TypeMatchResult TypeResult)>();
@@ -108,20 +175,20 @@ public sealed class WikidataReconciler : IDisposable
             if (!entities.TryGetValue(id, out var entity))
                 continue;
 
-            // Type checking (async for P279 support)
+            // Type checking (async for P279 support, multi-type OR logic)
             var typeResult = await _typeChecker.CheckAsync(
-                entity, request.Type, request.ExcludeTypes,
-                _subclassResolver, language, cancellationToken).ConfigureAwait(false);
+                entity, effectiveTypes, request.ExcludeTypes,
+                subclassResolver, language, cancellationToken).ConfigureAwait(false);
 
             if (typeResult == TypeMatchResult.Excluded || typeResult == TypeMatchResult.NotMatched)
                 continue;
 
             // Score the candidate
-            var scoring = _scorer.Score(request.Query, entity, language, request.Properties);
+            var scoring = _scorer.Score(request.Query, entity, language, request.Properties, request.DiacriticInsensitive);
 
             // Halve score for entities with no type when a type was requested
             var finalScore = scoring.Score;
-            if (typeResult == TypeMatchResult.NoType && !string.IsNullOrEmpty(request.Type))
+            if (typeResult == TypeMatchResult.NoType && hasTypeConstraint)
                 finalScore /= 2.0;
 
             var types = WikidataEntityFetcher.GetTypeIds(entity, _options.TypePropertyId);
@@ -148,7 +215,7 @@ public sealed class WikidataReconciler : IDisposable
             LanguageFallback.TryGetValue(entity.Labels, language, out var label);
             LanguageFallback.TryGetValue(entity.Descriptions, language, out var description);
 
-            var typePenaltyApplied = typeResult == TypeMatchResult.NoType && !string.IsNullOrEmpty(request.Type);
+            var typePenaltyApplied = typeResult == TypeMatchResult.NoType && hasTypeConstraint;
 
             results.Add(new ReconciliationResult
             {
@@ -164,7 +231,7 @@ public sealed class WikidataReconciler : IDisposable
                     LabelScore = scoring.LabelScore,
                     MatchedLabel = scoring.MatchedLabel,
                     PropertyScores = scoring.PropertyScores,
-                    TypeMatched = string.IsNullOrEmpty(request.Type) ? null : typeResult == TypeMatchResult.Matched,
+                    TypeMatched = !hasTypeConstraint ? null : typeResult == TypeMatchResult.Matched,
                     WeightedScore = Math.Round(scoring.WeightedScore, 2),
                     TypePenaltyApplied = typePenaltyApplied,
                     UniqueIdMatch = scoring.UniqueIdMatch
@@ -278,8 +345,20 @@ public sealed class WikidataReconciler : IDisposable
     /// Fetches full entity data for the given QIDs, including labels, descriptions, aliases,
     /// and all claims with qualifiers.
     /// </summary>
-    public async Task<IReadOnlyDictionary<string, WikidataEntityInfo>> GetEntitiesAsync(
+    public Task<IReadOnlyDictionary<string, WikidataEntityInfo>> GetEntitiesAsync(
         IReadOnlyList<string> qids, string? language = null, CancellationToken cancellationToken = default)
+    {
+        return GetEntitiesAsync(qids, resolveEntityLabels: false, language, cancellationToken);
+    }
+
+    /// <summary>
+    /// Fetches full entity data for the given QIDs. When <paramref name="resolveEntityLabels"/> is true,
+    /// entity-valued claims (e.g., P50 author → Q42) will have their <see cref="WikidataValue.EntityLabel"/>
+    /// populated with the referenced entity's label in the requested language.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, WikidataEntityInfo>> GetEntitiesAsync(
+        IReadOnlyList<string> qids, bool resolveEntityLabels,
+        string? language = null, CancellationToken cancellationToken = default)
     {
         var lang = language ?? _options.Language;
         var entities = await _entityFetcher.FetchEntitiesAsync(qids, lang, cancellationToken)
@@ -291,7 +370,98 @@ public sealed class WikidataReconciler : IDisposable
             result[id] = EntityMapper.MapEntity(entity, lang);
         }
 
+        if (resolveEntityLabels)
+            await ResolveEntityLabelsAsync(result, lang, cancellationToken).ConfigureAwait(false);
+
         return result;
+    }
+
+    private async Task ResolveEntityLabelsAsync(
+        Dictionary<string, WikidataEntityInfo> entities, string language, CancellationToken cancellationToken)
+    {
+        // Collect all unique entity IDs referenced in claims and qualifiers
+        var referencedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var entityInfo in entities.Values)
+        {
+            foreach (var claims in entityInfo.Claims.Values)
+            {
+                foreach (var claim in claims)
+                {
+                    if (claim.Value?.Kind == WikidataValueKind.EntityId && !string.IsNullOrEmpty(claim.Value.EntityId))
+                        referencedIds.Add(claim.Value.EntityId);
+
+                    foreach (var qualValues in claim.Qualifiers.Values)
+                    {
+                        foreach (var qv in qualValues)
+                        {
+                            if (qv.Kind == WikidataValueKind.EntityId && !string.IsNullOrEmpty(qv.EntityId))
+                                referencedIds.Add(qv.EntityId);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Remove IDs we already have (they're in the result set)
+        foreach (var id in entities.Keys)
+            referencedIds.Remove(id);
+
+        if (referencedIds.Count == 0 && entities.Count == 0)
+            return;
+
+        // Batch-fetch labels for all referenced entities
+        var labelLookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        // First, use labels from entities we already have
+        foreach (var (id, info) in entities)
+        {
+            if (!string.IsNullOrEmpty(info.Label))
+                labelLookup[id] = info.Label;
+        }
+
+        // Then fetch labels for remaining referenced IDs
+        if (referencedIds.Count > 0)
+        {
+            var labelEntities = await _entityFetcher.FetchLabelsOnlyAsync(
+                referencedIds.ToList(), language, cancellationToken).ConfigureAwait(false);
+
+            foreach (var (id, entity) in labelEntities)
+            {
+                if (LanguageFallback.TryGetValue(entity.Labels, language, out var label))
+                    labelLookup[id] = label;
+            }
+        }
+
+        // Walk all claims and set EntityLabel
+        foreach (var entityInfo in entities.Values)
+        {
+            foreach (var claims in entityInfo.Claims.Values)
+            {
+                foreach (var claim in claims)
+                {
+                    if (claim.Value?.Kind == WikidataValueKind.EntityId &&
+                        !string.IsNullOrEmpty(claim.Value.EntityId) &&
+                        labelLookup.TryGetValue(claim.Value.EntityId, out var label))
+                    {
+                        claim.Value.EntityLabel = label;
+                    }
+
+                    foreach (var qualValues in claim.Qualifiers.Values)
+                    {
+                        foreach (var qv in qualValues)
+                        {
+                            if (qv.Kind == WikidataValueKind.EntityId &&
+                                !string.IsNullOrEmpty(qv.EntityId) &&
+                                labelLookup.TryGetValue(qv.EntityId, out var qLabel))
+                            {
+                                qv.EntityLabel = qLabel;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -414,6 +584,92 @@ public sealed class WikidataReconciler : IDisposable
             catch
             {
                 // Skip entities whose Wikipedia summary fails to fetch
+            }
+            finally
+            {
+                _concurrencyLimiter.Release();
+            }
+            return null;
+        });
+
+        var fetched = await Task.WhenAll(tasks).ConfigureAwait(false);
+        return fetched.Where(s => s is not null).ToList()!;
+    }
+
+    /// <summary>
+    /// Fetches Wikipedia article summaries with language fallback.
+    /// For each entity, tries the requested language first, then each fallback language in order.
+    /// The <see cref="WikipediaSummary.Language"/> property indicates which edition was used.
+    /// </summary>
+    /// <param name="qids">Entity IDs to fetch summaries for.</param>
+    /// <param name="language">Preferred Wikipedia language edition.</param>
+    /// <param name="fallbackLanguages">Additional languages to try if the preferred language has no article.
+    /// If null, uses the default fallback chain (subtag parent → "en").</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public async Task<IReadOnlyList<WikipediaSummary>> GetWikipediaSummariesAsync(
+        IReadOnlyList<string> qids, string language,
+        IReadOnlyList<string>? fallbackLanguages, CancellationToken cancellationToken = default)
+    {
+        // Build language chain: requested → fallback languages (or default chain)
+        var langChain = fallbackLanguages is { Count: > 0 }
+            ? new List<string> { language }.Concat(fallbackLanguages.Where(l => !string.Equals(l, language, StringComparison.OrdinalIgnoreCase))).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+            : LanguageFallback.GetFallbackChain(language);
+
+        // Fetch sitelinks without language filter to get all available sitelinks
+        var entities = await _entityFetcher.FetchEntitiesWithSitelinksAsync(qids, language, cancellationToken)
+            .ConfigureAwait(false);
+
+        // For each QID, find the first language with a sitelink
+        var qidToLangTitle = new Dictionary<string, (string Language, string Title)>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (id, entity) in entities)
+        {
+            if (entity.Sitelinks is null) continue;
+
+            foreach (var lang in langChain)
+            {
+                var siteKey = $"{lang}wiki";
+                if (entity.Sitelinks.TryGetValue(siteKey, out var sitelink) && !string.IsNullOrEmpty(sitelink.Title))
+                {
+                    qidToLangTitle[id] = (lang, sitelink.Title);
+                    break;
+                }
+            }
+        }
+
+        if (qidToLangTitle.Count == 0)
+            return [];
+
+        var tasks = qidToLangTitle.Select(async kvp =>
+        {
+            await _concurrencyLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var lang = kvp.Value.Language;
+                var title = kvp.Value.Title;
+                var url = $"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{Uri.EscapeDataString(title)}";
+                var json = await _httpClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+                var response = System.Text.Json.JsonSerializer.Deserialize(json,
+                    Internal.Json.WikidataJsonContext.Default.WikipediaSummaryResponse);
+
+                if (response is not null && !string.IsNullOrEmpty(response.Extract))
+                {
+                    return new WikipediaSummary
+                    {
+                        EntityId = kvp.Key,
+                        Title = response.Title,
+                        Extract = response.Extract,
+                        Description = response.Description,
+                        ThumbnailUrl = response.Thumbnail?.Source,
+                        ArticleUrl = response.ContentUrls?.Desktop?.Page
+                            ?? $"https://{lang}.wikipedia.org/wiki/{Uri.EscapeDataString(title)}",
+                        Language = lang
+                    };
+                }
+            }
+            catch
+            {
+                // Skip on failure
             }
             finally
             {
@@ -742,6 +998,179 @@ public sealed class WikidataReconciler : IDisposable
                 RevisionId = rc.RevId
             })
             .OrderByDescending(c => c.Timestamp)
+            .ToList();
+    }
+
+    // ─── Work-to-Edition Pivoting ──────────────────────────────────
+
+    /// <summary>
+    /// Fetches editions and translations (P747) of a work entity.
+    /// Optionally filters by P31 type (e.g., only audiobook editions).
+    /// </summary>
+    /// <param name="workQid">The QID of the work entity (e.g., "Q190192" for The Hitchhiker's Guide to the Galaxy).</param>
+    /// <param name="filterTypes">Optional P31 type QIDs to filter editions. Only editions matching any of these types are returned.</param>
+    /// <param name="language">Language for labels/descriptions. Defaults to configured language.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public async Task<IReadOnlyList<EditionInfo>> GetEditionsAsync(
+        string workQid, IReadOnlyList<string>? filterTypes = null,
+        string? language = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(workQid);
+
+        var lang = language ?? _options.Language;
+
+        // Fetch the work entity to get P747 (has edition or translation)
+        var workEntities = await _entityFetcher.FetchEntitiesAsync([workQid], lang, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!workEntities.TryGetValue(workQid, out var workEntity))
+            return [];
+
+        var editionIds = WikidataEntityFetcher.GetClaimValues(workEntity, "P747")
+            .Select(dv => EntityMapper.MapDataValue(dv, "wikibase-item"))
+            .Where(v => v.Kind == WikidataValueKind.EntityId && !string.IsNullOrEmpty(v.EntityId))
+            .Select(v => v.EntityId!)
+            .ToList();
+
+        if (editionIds.Count == 0)
+            return [];
+
+        // Batch-fetch all editions
+        var editionEntities = await _entityFetcher.FetchEntitiesAsync(editionIds, lang, cancellationToken)
+            .ConfigureAwait(false);
+
+        var filterSet = filterTypes is { Count: > 0 }
+            ? new HashSet<string>(filterTypes, StringComparer.OrdinalIgnoreCase)
+            : null;
+
+        var results = new List<EditionInfo>();
+        foreach (var (id, entity) in editionEntities)
+        {
+            var types = WikidataEntityFetcher.GetTypeIds(entity, _options.TypePropertyId);
+
+            // Apply type filter if specified
+            if (filterSet is not null && !types.Any(t => filterSet.Contains(t)))
+                continue;
+
+            LanguageFallback.TryGetValue(entity.Labels, lang, out var label);
+            LanguageFallback.TryGetValue(entity.Descriptions, lang, out var description);
+
+            results.Add(new EditionInfo
+            {
+                EntityId = id,
+                Label = string.IsNullOrEmpty(label) ? null : label,
+                Description = string.IsNullOrEmpty(description) ? null : description,
+                Types = types,
+                Claims = EntityMapper.MapClaims(entity.Claims)
+            });
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Given an edition QID, finds the parent work via P629 (edition or translation of).
+    /// Returns the work entity info, or null if the entity has no P629 claim.
+    /// </summary>
+    public async Task<WikidataEntityInfo?> GetWorkForEditionAsync(
+        string editionQid, string? language = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(editionQid);
+
+        var lang = language ?? _options.Language;
+        var editionEntities = await _entityFetcher.FetchEntitiesAsync([editionQid], lang, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!editionEntities.TryGetValue(editionQid, out var editionEntity))
+            return null;
+
+        var workIds = WikidataEntityFetcher.GetClaimValues(editionEntity, "P629")
+            .Select(dv => EntityMapper.MapDataValue(dv, "wikibase-item"))
+            .Where(v => v.Kind == WikidataValueKind.EntityId && !string.IsNullOrEmpty(v.EntityId))
+            .Select(v => v.EntityId!)
+            .ToList();
+
+        if (workIds.Count == 0)
+            return null;
+
+        var workEntities = await _entityFetcher.FetchEntitiesAsync([workIds[0]], lang, cancellationToken)
+            .ConfigureAwait(false);
+
+        return workEntities.TryGetValue(workIds[0], out var workEntity)
+            ? EntityMapper.MapEntity(workEntity, lang)
+            : null;
+    }
+
+    // ─── Pen Name / Pseudonym Detection ─────────────────────────────
+
+    /// <summary>
+    /// Detects pseudonyms (P742) for authors associated with an entity.
+    /// If the entity itself is an author (has P742), returns its pseudonyms directly.
+    /// If the entity has P50 (author) claims, fetches those authors and returns their pseudonyms.
+    /// </summary>
+    public async Task<IReadOnlyList<PseudonymInfo>> GetAuthorPseudonymsAsync(
+        string entityQid, string? language = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(entityQid);
+
+        var lang = language ?? _options.Language;
+        var entities = await _entityFetcher.FetchEntitiesAsync([entityQid], lang, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!entities.TryGetValue(entityQid, out var entity))
+            return [];
+
+        // Check if entity itself has P742 (pseudonym) — it's an author
+        var directPseudonyms = GetPseudonymsFromEntity(entity);
+        if (directPseudonyms.Count > 0)
+        {
+            LanguageFallback.TryGetValue(entity.Labels, lang, out var label);
+            return [new PseudonymInfo
+            {
+                AuthorEntityId = entityQid,
+                AuthorLabel = string.IsNullOrEmpty(label) ? null : label,
+                Pseudonyms = directPseudonyms
+            }];
+        }
+
+        // Otherwise, check P50 (author) claims
+        var authorIds = WikidataEntityFetcher.GetClaimValues(entity, "P50")
+            .Select(dv => EntityMapper.MapDataValue(dv, "wikibase-item"))
+            .Where(v => v.Kind == WikidataValueKind.EntityId && !string.IsNullOrEmpty(v.EntityId))
+            .Select(v => v.EntityId!)
+            .ToList();
+
+        if (authorIds.Count == 0)
+            return [];
+
+        var authorEntities = await _entityFetcher.FetchEntitiesAsync(authorIds, lang, cancellationToken)
+            .ConfigureAwait(false);
+
+        var results = new List<PseudonymInfo>();
+        foreach (var (id, authorEntity) in authorEntities)
+        {
+            var pseudonyms = GetPseudonymsFromEntity(authorEntity);
+            if (pseudonyms.Count == 0)
+                continue;
+
+            LanguageFallback.TryGetValue(authorEntity.Labels, lang, out var authorLabel);
+            results.Add(new PseudonymInfo
+            {
+                AuthorEntityId = id,
+                AuthorLabel = string.IsNullOrEmpty(authorLabel) ? null : authorLabel,
+                Pseudonyms = pseudonyms
+            });
+        }
+
+        return results;
+    }
+
+    private static List<string> GetPseudonymsFromEntity(Internal.Json.WikidataEntity entity)
+    {
+        return WikidataEntityFetcher.GetClaimValues(entity, "P742")
+            .Select(dv => EntityMapper.MapDataValue(dv, "string"))
+            .Where(v => !string.IsNullOrEmpty(v.RawValue))
+            .Select(v => v.RawValue)
             .ToList();
     }
 

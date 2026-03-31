@@ -49,6 +49,13 @@ public sealed class WikidataValue
     public string? EntityId { get; init; }
 
     /// <summary>
+    /// For EntityId values: the human-readable label of the referenced entity
+    /// in the requested language. Populated when entity label resolution is enabled
+    /// via <see cref="WikidataReconciler.GetEntitiesAsync"/>. Null when not resolved.
+    /// </summary>
+    public string? EntityLabel { get; internal set; }
+
+    /// <summary>
     /// For Time values: precision level (9=year, 10=month, 11=day). Null for other kinds.
     /// </summary>
     public int? TimePrecision { get; init; }
@@ -94,7 +101,7 @@ public sealed class WikidataValue
             WikidataValueKind.Time => FormatTime(),
             WikidataValueKind.Quantity => FormatQuantity(),
             WikidataValueKind.GlobeCoordinate => FormatCoordinates(),
-            WikidataValueKind.EntityId => EntityId ?? RawValue,
+            WikidataValueKind.EntityId => EntityLabel ?? EntityId ?? RawValue,
             WikidataValueKind.MonolingualText => RawValue,
             _ => RawValue
         };

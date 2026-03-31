@@ -24,13 +24,14 @@ internal sealed class SubclassResolver
 
     /// <summary>
     /// Returns true if any of the entity's type QIDs is equal to or a subclass of the target type.
-    /// Walks P279 up to maxDepth levels.
+    /// Walks P279 up to maxDepth levels (or overrideDepth if specified).
     /// </summary>
     public async Task<bool> IsSubclassOfAsync(
         IReadOnlyList<string> entityTypeQids,
         string targetTypeQid,
         string language,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int? overrideDepth = null)
     {
         // Quick check: direct match (no API calls needed)
         foreach (var typeQid in entityTypeQids)
@@ -47,9 +48,10 @@ internal sealed class SubclassResolver
         }
 
         // BFS: walk P279 hierarchy for each entity type
+        var depth = overrideDepth ?? _maxDepth;
         foreach (var typeQid in entityTypeQids)
         {
-            if (await WalkSuperclassesAsync(typeQid, targetTypeQid, language, cancellationToken).ConfigureAwait(false))
+            if (await WalkSuperclassesAsync(typeQid, targetTypeQid, language, depth, cancellationToken).ConfigureAwait(false))
                 return true;
         }
 
@@ -57,7 +59,7 @@ internal sealed class SubclassResolver
     }
 
     private async Task<bool> WalkSuperclassesAsync(
-        string startQid, string targetQid, string language, CancellationToken cancellationToken)
+        string startQid, string targetQid, string language, int maxDepth, CancellationToken cancellationToken)
     {
         // Check cache
         if (_superclassCache.TryGetValue(startQid, out var cached))
@@ -66,7 +68,7 @@ internal sealed class SubclassResolver
         var superclasses = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { startQid };
         var frontier = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { startQid };
 
-        for (var depth = 0; depth < _maxDepth && frontier.Count > 0; depth++)
+        for (var depth = 0; depth < maxDepth && frontier.Count > 0; depth++)
         {
             // Fetch all frontier entities in one batch
             var entities = await _fetcher.FetchEntitiesAsync(frontier.ToList(), language, cancellationToken)

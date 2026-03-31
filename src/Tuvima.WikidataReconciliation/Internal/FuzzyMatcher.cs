@@ -31,6 +31,27 @@ internal static class FuzzyMatcher
     }
 
     /// <summary>
+    /// Computes a token-sort-ratio score with optional diacritic stripping (0-100).
+    /// Returns the maximum of diacritic-insensitive and standard comparison.
+    /// </summary>
+    public static int TokenSortRatio(string s1, string s2, bool stripDiacritics)
+    {
+        var standard = TokenSortRatio(s1, s2);
+        if (!stripDiacritics)
+            return standard;
+
+        // Also compare with diacritics removed, return the better score
+        var n1 = SortTokens(NormalizeDiacriticInsensitive(s1));
+        var n2 = SortTokens(NormalizeDiacriticInsensitive(s2));
+
+        if (n1.Length == 0 || n2.Length == 0)
+            return standard;
+
+        var stripped = n1 == n2 ? 100 : LevenshteinRatio(n1, n2);
+        return Math.Max(standard, stripped);
+    }
+
+    /// <summary>
     /// Computes a simple ratio between two strings without tokenization (0-100).
     /// </summary>
     public static int Ratio(string s1, string s2)
@@ -47,10 +68,33 @@ internal static class FuzzyMatcher
         return LevenshteinRatio(n1, n2);
     }
 
+    /// <summary>
+    /// Removes diacritical marks from a string.
+    /// "Shōgun" → "Shogun", "Müller" → "Muller", "café" → "cafe".
+    /// </summary>
+    internal static string RemoveDiacritics(string s)
+    {
+        var nfd = s.Normalize(NormalizationForm.FormD);
+        var sb = new StringBuilder(nfd.Length);
+
+        foreach (var ch in nfd)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(ch) != UnicodeCategory.NonSpacingMark)
+                sb.Append(ch);
+        }
+
+        return sb.ToString().Normalize(NormalizationForm.FormC);
+    }
+
     private static string Normalize(string s)
     {
         // Lowercase + NFC normalization
         return s.Normalize(NormalizationForm.FormC).ToLower(CultureInfo.InvariantCulture).Trim();
+    }
+
+    private static string NormalizeDiacriticInsensitive(string s)
+    {
+        return RemoveDiacritics(Normalize(s));
     }
 
     private static string SortTokens(string s)

@@ -82,6 +82,14 @@ public sealed class WikidataReconcilerOptions
     public int TypeHierarchyDepth { get; init; } = 0;
 
     /// <summary>
+    /// When true, Wikipedia sitelink titles are included in the label pool for scoring.
+    /// Sitelink titles are often more human-friendly than formal Wikidata labels
+    /// (e.g., "Frankenstein" instead of "Frankenstein; or, The Modern Prometheus").
+    /// Default is false (opt-in to avoid increased API response size).
+    /// </summary>
+    public bool IncludeSitelinkLabels { get; init; } = false;
+
+    /// <summary>
     /// Property IDs considered unique identifiers. When a property constraint matches
     /// one of these with score 100, the overall reconciliation score is set to 100.
     /// Default includes common authority control IDs.

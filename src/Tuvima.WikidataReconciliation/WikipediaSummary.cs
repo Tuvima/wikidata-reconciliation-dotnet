@@ -34,4 +34,10 @@ public sealed class WikipediaSummary
     /// Full URL to the Wikipedia article.
     /// </summary>
     public required string ArticleUrl { get; init; }
+
+    /// <summary>
+    /// The Wikipedia language edition this summary was fetched from (e.g., "en", "de").
+    /// Populated when language fallback is used; null when fetched with the original single-language method.
+    /// </summary>
+    public string? Language { get; init; }
 }

@@ -16,12 +16,27 @@ internal sealed class TypeChecker
     }
 
     /// <summary>
-    /// Determines the type match status for an entity.
+    /// Determines the type match status for an entity against a single required type.
+    /// </summary>
+    public Task<TypeMatchResult> CheckAsync(
+        WikidataEntity entity,
+        string? requiredType,
+        IReadOnlyList<string>? excludeTypes,
+        SubclassResolver? subclassResolver,
+        string language,
+        CancellationToken cancellationToken)
+    {
+        var requiredTypes = string.IsNullOrEmpty(requiredType) ? null : new[] { requiredType };
+        return CheckAsync(entity, requiredTypes, excludeTypes, subclassResolver, language, cancellationToken);
+    }
+
+    /// <summary>
+    /// Determines the type match status for an entity against multiple required types (OR logic).
     /// When subclassResolver is provided and depth > 0, walks P279 hierarchy.
     /// </summary>
     public async Task<TypeMatchResult> CheckAsync(
         WikidataEntity entity,
-        string? requiredType,
+        IReadOnlyList<string>? requiredTypes,
         IReadOnlyList<string>? excludeTypes,
         SubclassResolver? subclassResolver,
         string language,
@@ -38,7 +53,6 @@ internal sealed class TypeChecker
                     return TypeMatchResult.Excluded;
             }
 
-            // Also check subclass exclusion if resolver available
             if (subclassResolver != null)
             {
                 foreach (var excludeType in excludeTypes)
@@ -51,23 +65,29 @@ internal sealed class TypeChecker
         }
 
         // No type constraint requested — passes
-        if (string.IsNullOrEmpty(requiredType))
+        if (requiredTypes is not { Count: > 0 })
             return TypeMatchResult.NoConstraint;
 
         // Entity has no types at all
         if (entityTypes.Count == 0)
             return TypeMatchResult.NoType;
 
-        // Check direct P31 match
-        if (entityTypes.Any(t => string.Equals(t, requiredType, StringComparison.OrdinalIgnoreCase)))
-            return TypeMatchResult.Matched;
+        // Check direct P31 match against any required type (OR logic)
+        foreach (var requiredType in requiredTypes)
+        {
+            if (entityTypes.Any(t => string.Equals(t, requiredType, StringComparison.OrdinalIgnoreCase)))
+                return TypeMatchResult.Matched;
+        }
 
         // Check P279 subclass hierarchy if resolver is available
         if (subclassResolver != null)
         {
-            if (await subclassResolver.IsSubclassOfAsync(entityTypes, requiredType, language, cancellationToken)
-                    .ConfigureAwait(false))
-                return TypeMatchResult.Matched;
+            foreach (var requiredType in requiredTypes)
+            {
+                if (await subclassResolver.IsSubclassOfAsync(entityTypes, requiredType, language, cancellationToken)
+                        .ConfigureAwait(false))
+                    return TypeMatchResult.Matched;
+            }
         }
 
         return TypeMatchResult.NotMatched;

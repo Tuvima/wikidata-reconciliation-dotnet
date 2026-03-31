@@ -25,7 +25,8 @@ internal sealed class WikidataSearchClient
     /// Searches for candidate entities matching the query.
     /// Returns deduplicated entity IDs (full-text results first, then autocomplete results).
     /// </summary>
-    public async Task<List<string>> SearchAsync(string query, string language, int limit, CancellationToken cancellationToken = default)
+    public async Task<List<string>> SearchAsync(string query, string language, int limit,
+        bool diacriticInsensitive = false, CancellationToken cancellationToken = default)
     {
         // Direct QID lookup bypass
         if (QidPattern.IsMatch(query.Trim()))
@@ -36,22 +37,71 @@ internal sealed class WikidataSearchClient
         var fetchLimit = Math.Min(2 * limit, 50);
 
         // Run both searches concurrently
-        var autocompleteTask = SearchEntitiesAsync(searchQuery, language, fetchLimit, cancellationToken);
-        var fullTextTask = FullTextSearchAsync(searchQuery, language, fetchLimit, cancellationToken);
+        var tasks = new List<Task<List<string>>>
+        {
+            SearchEntitiesAsync(searchQuery, language, fetchLimit, cancellationToken),
+            FullTextSearchAsync(searchQuery, language, fetchLimit, cancellationToken)
+        };
 
-        await Task.WhenAll(autocompleteTask, fullTextTask).ConfigureAwait(false);
+        // If diacritic-insensitive and the stripped query differs, run additional searches
+        if (diacriticInsensitive)
+        {
+            var stripped = FuzzyMatcher.RemoveDiacritics(searchQuery);
+            if (!string.Equals(stripped, searchQuery, StringComparison.Ordinal))
+            {
+                tasks.Add(SearchEntitiesAsync(stripped, language, fetchLimit, cancellationToken));
+                tasks.Add(FullTextSearchAsync(stripped, language, fetchLimit, cancellationToken));
+            }
+        }
 
-        var autocompleteIds = await autocompleteTask.ConfigureAwait(false);
-        var fullTextIds = await fullTextTask.ConfigureAwait(false);
+        await Task.WhenAll(tasks).ConfigureAwait(false);
 
-        // Merge: full-text results first, then autocomplete, deduplicated
+        // Merge: full-text results first (index 1, then 3 if present), then autocomplete (0, then 2)
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var merged = new List<string>();
 
-        foreach (var id in fullTextIds.Concat(autocompleteIds))
+        // Full-text results first
+        AddUnique(await tasks[1].ConfigureAwait(false), seen, merged);
+        if (tasks.Count > 2)
+            AddUnique(await tasks[3].ConfigureAwait(false), seen, merged);
+
+        // Then autocomplete results
+        AddUnique(await tasks[0].ConfigureAwait(false), seen, merged);
+        if (tasks.Count > 2)
+            AddUnique(await tasks[2].ConfigureAwait(false), seen, merged);
+
+        return merged;
+    }
+
+    private static void AddUnique(List<string> ids, HashSet<string> seen, List<string> merged)
+    {
+        foreach (var id in ids)
         {
             if (seen.Add(id))
                 merged.Add(id);
+        }
+    }
+
+    /// <summary>
+    /// Searches in multiple languages concurrently, merging and deduplicating results by QID.
+    /// </summary>
+    public async Task<List<string>> SearchMultiLanguageAsync(
+        string query, IReadOnlyList<string> languages, int limit,
+        bool diacriticInsensitive = false, CancellationToken cancellationToken = default)
+    {
+        var tasks = languages.Select(lang => SearchAsync(query, lang, limit, diacriticInsensitive, cancellationToken));
+        var allResults = await Task.WhenAll(tasks).ConfigureAwait(false);
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var merged = new List<string>();
+
+        foreach (var results in allResults)
+        {
+            foreach (var id in results)
+            {
+                if (seen.Add(id))
+                    merged.Add(id);
+            }
         }
 
         return merged;
@@ -85,6 +135,27 @@ internal sealed class WikidataSearchClient
         var response = JsonSerializer.Deserialize(json, WikidataJsonContext.Default.WbSearchEntitiesResponse);
 
         return response?.Search ?? [];
+    }
+
+    /// <summary>
+    /// Searches for entities with CirrusSearch type filtering (haswbstatement:P31=QID).
+    /// Returns entities whose P31 matches any of the provided types.
+    /// </summary>
+    public async Task<List<string>> SearchWithTypeFilterAsync(
+        string query, string language, IReadOnlyList<string> typeQids, int limit,
+        CancellationToken cancellationToken = default)
+    {
+        // Build CirrusSearch query with haswbstatement for each type (OR logic)
+        var typeFilters = string.Join(" OR ", typeQids.Select(t => $"haswbstatement:P31={t}"));
+        var searchQuery = $"{query} ({typeFilters})";
+
+        var url = $"{_options.ApiEndpoint}?action=query&list=search&srnamespace=0" +
+                  $"&srlimit={limit}&srsearch={Uri.EscapeDataString(searchQuery)}&format=json";
+
+        var json = await _httpClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+        var response = JsonSerializer.Deserialize(json, WikidataJsonContext.Default.QuerySearchResponse);
+
+        return response?.Query?.Search?.Select(r => r.Title).ToList() ?? [];
     }
 
     /// <summary>

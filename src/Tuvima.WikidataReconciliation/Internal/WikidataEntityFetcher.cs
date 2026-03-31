@@ -35,9 +35,22 @@ internal sealed class WikidataEntityFetcher
     /// Used by the reconciliation pipeline so cross-language label matching works.
     /// </summary>
     public async Task<Dictionary<string, WikidataEntity>> FetchEntitiesAllLanguagesAsync(
-        IReadOnlyList<string> ids, CancellationToken cancellationToken = default)
+        IReadOnlyList<string> ids, bool includeSitelinks = false, CancellationToken cancellationToken = default)
     {
-        return await FetchInBatchesAsync(ids, null, "info|labels|descriptions|aliases|claims", cancellationToken)
+        var props = includeSitelinks
+            ? "info|labels|descriptions|aliases|claims|sitelinks"
+            : "info|labels|descriptions|aliases|claims";
+        return await FetchInBatchesAsync(ids, null, props, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Fetches entity labels only (lightweight, for entity reference label resolution).
+    /// </summary>
+    public async Task<Dictionary<string, WikidataEntity>> FetchLabelsOnlyAsync(
+        IReadOnlyList<string> ids, string language, CancellationToken cancellationToken = default)
+    {
+        return await FetchInBatchesAsync(ids, language, "labels", cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -50,6 +63,7 @@ internal sealed class WikidataEntityFetcher
         return await FetchInBatchesAsync(ids, language, "sitelinks", cancellationToken)
             .ConfigureAwait(false);
     }
+
 
     private async Task<Dictionary<string, WikidataEntity>> FetchInBatchesAsync(
         IReadOnlyList<string> ids, string? language, string props, CancellationToken cancellationToken)
@@ -141,6 +155,35 @@ internal sealed class WikidataEntityFetcher
                     if (!string.IsNullOrEmpty(alias.Value) && seen.Add(alias.Value))
                         labels.Add(alias.Value);
                 }
+            }
+        }
+
+        return labels;
+    }
+
+    /// <summary>
+    /// Extracts all labels, aliases, and sitelink titles across ALL languages.
+    /// Sitelink titles are often more human-friendly than formal labels.
+    /// </summary>
+    public static List<string> GetAllLabelsWithSitelinks(WikidataEntity entity)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var labels = new List<string>();
+
+        // Start with all regular labels and aliases
+        foreach (var label in GetAllLabelsAllLanguages(entity))
+        {
+            if (seen.Add(label))
+                labels.Add(label);
+        }
+
+        // Add sitelink titles
+        if (entity.Sitelinks is not null)
+        {
+            foreach (var sitelink in entity.Sitelinks.Values)
+            {
+                if (!string.IsNullOrEmpty(sitelink.Title) && seen.Add(sitelink.Title))
+                    labels.Add(sitelink.Title);
             }
         }
 

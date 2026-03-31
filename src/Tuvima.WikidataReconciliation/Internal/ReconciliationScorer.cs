@@ -20,16 +20,19 @@ internal sealed class ReconciliationScorer
     /// Scores a candidate entity against a reconciliation request.
     /// Returns both the overall score and a detailed breakdown.
     /// </summary>
-    public ScoringResult Score(string query, WikidataEntity entity, string language, IReadOnlyList<PropertyConstraint>? properties)
+    public ScoringResult Score(string query, WikidataEntity entity, string language,
+        IReadOnlyList<PropertyConstraint>? properties, bool diacriticInsensitive = false)
     {
         // Label matching: fuzzy match query against all labels + aliases across ALL languages, take max
-        var allLabels = WikidataEntityFetcher.GetAllLabelsAllLanguages(entity);
+        var allLabels = _options.IncludeSitelinkLabels
+            ? WikidataEntityFetcher.GetAllLabelsWithSitelinks(entity)
+            : WikidataEntityFetcher.GetAllLabelsAllLanguages(entity);
         var labelScore = 0;
         string? matchedLabel = null;
 
         foreach (var label in allLabels)
         {
-            var score = FuzzyMatcher.TokenSortRatio(query, label);
+            var score = FuzzyMatcher.TokenSortRatio(query, label, diacriticInsensitive);
             if (score > labelScore)
             {
                 labelScore = score;
