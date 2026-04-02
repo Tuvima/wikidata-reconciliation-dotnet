@@ -803,6 +803,10 @@ Results are sorted by score descending, with QID number as a tiebreaker (lower Q
 
 ## What's New by Version
 
+### v0.9.0
+
+- **Public EntityLabel setter** — `WikidataValue.EntityLabel` is now a public setter (was `internal set`). Consumers can set entity labels directly without needing workaround methods like `RehydrateEntityLabelsAsync` for custom label resolution scenarios.
+
 ### v0.8.0
 
 - **Automatic entity label resolution in GetPropertiesAsync** — `GetPropertiesAsync` now automatically resolves `EntityLabel` for all entity-reference property values (e.g., P50 author → "Frank Herbert" instead of raw QID "Q44413"). Labels are batch-fetched and respect the `language` parameter with fallback. Eliminates the need for consumers to make a separate `GetEntitiesAsync` call to resolve labels. Breaking change: the `resolveEntityLabels` parameter from v0.7.0 has been removed since resolution is now always enabled.

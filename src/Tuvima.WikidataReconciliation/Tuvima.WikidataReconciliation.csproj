@@ -8,7 +8,7 @@
 
     <!-- NuGet package metadata -->
     <PackageId>Tuvima.WikidataReconciliation</PackageId>
-    <Version>0.8.0</Version>
+    <Version>0.9.0</Version>
     <Authors>Tuvima</Authors>
     <Description>A .NET library for reconciling data against Wikidata. Implements dual-search (wbsearchentities + full-text), fuzzy matching, type filtering, and property-based scoring. Algorithms based on openrefine-wikibase by Antonin Delpeuch.</Description>
     <PackageTags>wikidata;reconciliation;wikibase;openrefine;entity-matching</PackageTags>

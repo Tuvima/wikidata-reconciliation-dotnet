@@ -50,10 +50,12 @@ public sealed class WikidataValue
 
     /// <summary>
     /// For EntityId values: the human-readable label of the referenced entity
-    /// in the requested language. Populated when entity label resolution is enabled
-    /// via <see cref="WikidataReconciler.GetEntitiesAsync"/>. Null when not resolved.
+    /// in the requested language. Automatically populated by
+    /// <see cref="WikidataReconciler.GetEntitiesAsync"/> (with resolveEntityLabels)
+    /// and <see cref="WikidataReconciler.GetPropertiesAsync"/>.
+    /// Can also be set by consumers for custom label resolution scenarios.
     /// </summary>
-    public string? EntityLabel { get; internal set; }
+    public string? EntityLabel { get; set; }
 
     /// <summary>
     /// For Time values: precision level (9=year, 10=month, 11=day). Null for other kinds.
