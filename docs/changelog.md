@@ -30,7 +30,6 @@ Unit test coverage expanded from 85 to 88: `LabelsMalformedQidTests` adds three 
 ### Deferred to future releases
 
 - **Reverse pseudonym lookup** — looking up "Richard Bachman" should populate `RealNameQid` with Stephen King's QID. Requires haswbstatement lookup on P742 string values; deferred because the CirrusSearch indexing story for string-typed claim values needs validation.
-- **Companion-hint first-page expansion** — the current re-ranking uses the reconciler's existing top-5 result list. A stronger integration would run a wider candidate search when hints are supplied.
 
 ## v2.2.2
 
