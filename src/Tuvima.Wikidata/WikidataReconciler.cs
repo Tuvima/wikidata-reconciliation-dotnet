@@ -38,6 +38,9 @@ public sealed class WikidataReconciler : IDisposable
     /// <summary>Single-entity and batch label lookup with language fallback.</summary>
     public LabelsService Labels { get; }
 
+    /// <summary>Role-aware person search (humans + musical groups) with occupation filtering and year/work hints.</summary>
+    public PersonsService Persons { get; }
+
     public WikidataReconciler()
         : this(new WikidataReconcilerOptions()) { }
 
@@ -62,6 +65,7 @@ public sealed class WikidataReconciler : IDisposable
         Children = new ChildrenService(_context);
         Authors = new AuthorsService(_context, Reconcile);
         Labels = new LabelsService(_context);
+        Persons = new PersonsService(_context, Reconcile, Labels);
     }
 
     // ─── Back-compat delegates (v1 API surface) ─────────────────────

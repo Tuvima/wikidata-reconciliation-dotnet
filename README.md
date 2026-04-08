@@ -115,6 +115,28 @@ The reconciliation pipeline has four stages: dual search, entity fetching, weigh
 
 [Architecture overview](docs/architecture.md) — pipeline stages, internal components, design decisions
 
+## What's New in v2.1.0
+
+Additive release — no breaking changes.
+
+- **`reconciler.Persons.SearchAsync(...)`** — role-aware person search with an internal role → occupation mapping table. Nine `PersonRole` values cover author, narrator, director, actor, voice actor, composer, performer, artist, and screenwriter. `Performer` and `Artist` roles automatically include Q215380 (musical group) + Q5741069 (ensemble) in the type filter. Year and work hints feed property constraints; musical groups can be expanded to their P527 members on demand.
+
+```csharp
+var result = await reconciler.Persons.SearchAsync(new PersonSearchRequest
+{
+    Name = "Daft Punk",
+    Role = PersonRole.Performer,   // defaults IncludeMusicalGroups = true
+    ExpandGroupMembers = true
+});
+
+if (result.Found && result.IsGroup)
+{
+    Console.WriteLine($"Group {result.CanonicalName} has {result.GroupMembers?.Count ?? 0} members");
+}
+```
+
+**Deferred to v2.2.0:** the Stage 2 resolver with discriminated `IStage2Request` hierarchy, edition pivoting, and bridge/music/text batch grouping.
+
 ## What's New in v2.0.0
 
 `WikidataReconciler` is now a thin facade that exposes seven focused sub-services as properties. Each sub-service owns a slice of the API and can be injected independently in DI. All v1 top-level methods remain as delegating shims, so existing call sites compile unchanged.

@@ -46,6 +46,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Children);
         services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Authors);
         services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Labels);
+        services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Persons);
 
         return services;
     }

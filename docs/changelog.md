@@ -1,5 +1,46 @@
 # Changelog
 
+## v2.1.0
+
+Additive release — no breaking changes on top of v2.0.0.
+
+### New — `reconciler.Persons` sub-service
+
+A role-aware person search primitive that replaces the hand-rolled `ReconcileAsync(Types: ["Q5"])` + P106 occupation constraints pattern that every consumer was re-implementing.
+
+```csharp
+var result = await reconciler.Persons.SearchAsync(new PersonSearchRequest
+{
+    Name = "Stephen King",
+    Role = PersonRole.Author,
+    BirthYearHint = 1947,
+    WorkQid = "Q208460" // The Shining
+});
+
+if (result.Found)
+{
+    Console.WriteLine($"{result.CanonicalName} ({result.Qid}) — {result.Score:P0}");
+}
+```
+
+**Features:**
+
+- **Role → occupation mapping** — 9 `PersonRole` values (`Author`, `Narrator`, `Director`, `Actor`, `VoiceActor`, `Composer`, `Performer`, `Artist`, `Screenwriter`) each map to a canonical set of P106 occupation QIDs. The mapping lives in one tested place instead of scattered `switch` statements in consumer code.
+- **Musical group defaulting** — `IncludeMusicalGroups` is `bool?` with a role-aware default: `Performer` and `Artist` default to `true` (include Q215380 + Q5741069), all other roles default to `false` (Q5 only). Explicit override still works.
+- **Year hints** — `BirthYearHint` and `DeathYearHint` feed P569/P570 soft scoring via `PropertyConstraint`.
+- **Work context** — `WorkQid` boosts candidates whose P800 references the work.
+- **Group member expansion** — when `ExpandGroupMembers = true` and the resolved entity is a musical group, the result populates `GroupMembers` from P527 (has parts).
+- **Accept threshold** — `AcceptThreshold` (default 0.80) controls whether `Found` flips true even when a candidate is returned. Callers can read `Score` to decide their own threshold.
+
+### ASP.NET Core
+
+- `AddWikidataReconciliation()` now also registers `PersonsService` as a singleton for direct injection.
+
+### Deferred
+
+- **Stage 2 resolver** (discriminated `IStage2Request` hierarchy, edition pivoting, bridge/music/text batch grouping) remains planned for **v2.2.0**.
+- Companion-name hint scoring is a structural signal today but does not yet drive a custom scoring term. Enhancement tracked for v2.3.
+
 ## v2.0.0
 
 **Breaking release** — introduces a facade/sub-service architecture and deletes three deprecated API shapes. See `docs/migrating-to-v2.md` for a step-by-step migration guide.

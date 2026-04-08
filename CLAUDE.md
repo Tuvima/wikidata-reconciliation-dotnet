@@ -10,7 +10,7 @@ Two NuGet packages:
 
 ## Architecture (v2.0.0)
 
-`WikidataReconciler` is a thin **facade** that owns a shared `ReconcilerContext` (HttpClient, options, search/fetcher/scorer/type-checker collaborators, global concurrency limiter) and exposes seven focused **sub-services** as properties:
+`WikidataReconciler` is a thin **facade** that owns a shared `ReconcilerContext` (HttpClient, options, search/fetcher/scorer/type-checker collaborators, global concurrency limiter) and exposes eight focused **sub-services** as properties:
 
 ```
 WikidataReconciler (facade, owns ReconcilerContext)
@@ -20,7 +20,8 @@ WikidataReconciler (facade, owns ReconcilerContext)
 ├── Editions     → EditionService          (P747 editions, P629 work-for-edition)
 ├── Children     → ChildrenService         (generic TraverseChildrenAsync, ChildEntityManifest builder)
 ├── Authors      → AuthorsService          (multi-author split + pen-name resolution)
-└── Labels       → LabelsService           (single + batch label lookup with fallback chain)
+├── Labels       → LabelsService           (single + batch label lookup with fallback chain)
+└── Persons      → PersonsService          (role-aware person search with occupation filtering, year/work hints, group expansion)  [v2.1]
 
 Shared internals (Tuvima.Wikidata.Internal):
 ├── ReconcilerContext           <- shared state for all sub-services
@@ -83,6 +84,9 @@ src/
 │   ├── AuthorResolutionRequest.cs           # Authors.ResolveAsync input: RawAuthorString, WorkQidHint, Language, DetectPseudonyms
 │   ├── AuthorResolutionResult.cs            # Authors.ResolveAsync output: Authors, UnresolvedNames
 │   ├── ResolvedAuthor.cs                    # Per-author result: OriginalName, Qid, CanonicalName, RealNameQid, Confidence
+│   ├── PersonRole.cs                        # Enum for Persons.SearchAsync: Author|Narrator|Director|Actor|VoiceActor|Composer|Performer|Artist|Screenwriter (v2.1)
+│   ├── PersonSearchRequest.cs               # Persons.SearchAsync input: Name, Role, TitleHint, WorkQid, IncludeMusicalGroups, BirthYearHint, DeathYearHint, CompanionNameHints, ExpandGroupMembers, AcceptThreshold (v2.1)
+│   ├── PersonSearchResult.cs                # Persons.SearchAsync output: Found, Qid, CanonicalName, IsGroup, Score, Occupations, NotableWorks, GroupMembers (v2.1)
 │   ├── SectionContent.cs                    # Title, Content (structured section content for subsection handling)
 │   ├── QueryCleaners.cs                     # Built-in title pre-cleaning functions
 │   ├── CachingDelegatingHandler.cs          # Abstract HTTP caching base class
@@ -93,7 +97,8 @@ src/
 │   │   ├── EditionService.cs                # P747 editions, P629 work-for-edition
 │   │   ├── ChildrenService.cs               # TraverseChildrenAsync (generic) + GetChildEntitiesAsync (manifest)
 │   │   ├── AuthorsService.cs                # ResolveAsync — multi-author split + pen-name detection
-│   │   └── LabelsService.cs                 # GetAsync, GetBatchAsync with language fallback
+│   │   ├── LabelsService.cs                 # GetAsync, GetBatchAsync with language fallback
+│   │   └── PersonsService.cs                # SearchAsync — role-aware person search (v2.1)
 │   ├── Graph/                               # Entity graph traversal module
 │   │   ├── EntityGraph.cs                   # Core graph class — adjacency lists, BFS pathfinding, family trees
 │   │   ├── GraphNode.cs                     # Entity node input model (Qid, Label, Type, WorkQids)
@@ -214,6 +219,12 @@ New code should call sub-services via `reconciler.{Service}.{Method}(...)`. All 
 |---|---|
 | `GetAsync(qid, language, withFallbackLanguage)` | **NEW.** Single-entity label lookup with optional language fallback chain. |
 | `GetBatchAsync(qids, language, withFallbackLanguage)` | **NEW.** Batch variant returning `IReadOnlyDictionary<string, string?>` — every input QID is present in the result dictionary (null means no label in requested language, absent means entity not found). |
+
+### `reconciler.Persons` — `PersonsService` (v2.1)
+
+| Method | Purpose |
+|---|---|
+| `SearchAsync(PersonSearchRequest)` | **NEW.** Role-aware person search. Reconciles against Q5 (human) + optionally Q215380/Q5741069 (musical groups). Uses an internal `FrozenDictionary<PersonRole, string[]>` to map roles (`Author`, `Narrator`, `Director`, `Actor`, `VoiceActor`, `Composer`, `Performer`, `Artist`, `Screenwriter`) to canonical P106 occupation QIDs. `IncludeMusicalGroups` is `bool?` with per-role defaults (`Performer` and `Artist` default to true). `BirthYearHint`, `DeathYearHint`, `WorkQid` feed property constraints. When `ExpandGroupMembers` is true and the hit is a group, populates `GroupMembers` from P527. |
 
 ### EntityGraph Methods (Tuvima.Wikidata.Graph)
 
