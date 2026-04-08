@@ -18,6 +18,28 @@ services.AddWikidataReconciliation(options =>
 });
 ```
 
+As of v2.0, `AddWikidataReconciliation` also registers each **sub-service** as a singleton, so consumers can inject a narrow slice of the API instead of depending on the whole facade:
+
+```csharp
+public sealed class MyEntityPipeline(
+    Tuvima.Wikidata.Services.LabelsService labels,
+    Tuvima.Wikidata.Services.AuthorsService authors,
+    Tuvima.Wikidata.Services.Stage2Service stage2)
+{
+    public async Task<string?> ResolveBookAsync(string isbn)
+    {
+        var result = await stage2.ResolveAsync(Stage2Request.Bridge(
+            correlationKey: isbn,
+            bridgeIds: new Dictionary<string, string> { ["isbn13"] = isbn },
+            wikidataProperties: new Dictionary<string, string> { ["isbn13"] = "P212" }));
+
+        return result.Found ? result.Label : null;
+    }
+}
+```
+
+All nine sub-services (`ReconciliationService`, `EntityService`, `WikipediaService`, `EditionService`, `ChildrenService`, `AuthorsService`, `LabelsService`, `PersonsService`, `Stage2Service`) resolve from the same root `WikidataReconciler`, so they share the same `HttpClient`, options, and global concurrency limiter.
+
 ## Endpoint Mapping
 
 ```csharp
@@ -48,7 +70,7 @@ All endpoints respect the `Accept-Language` header — a French browser automati
 
 ## Manual Registration (No Companion Package)
 
-Register manually with zero extra dependencies:
+Register the facade manually with zero extra dependencies:
 
 ```csharp
 services.AddHttpClient("Wikidata", c =>
@@ -58,3 +80,16 @@ services.AddSingleton(sp => new WikidataReconciler(
     sp.GetRequiredService<IHttpClientFactory>().CreateClient("Wikidata"),
     new WikidataReconcilerOptions { Language = "en" }));
 ```
+
+To also inject individual sub-services, add delegating registrations:
+
+```csharp
+services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Reconcile);
+services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Entities);
+services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Labels);
+services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Authors);
+services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Stage2);
+// …plus Wikipedia, Editions, Children, Persons as needed
+```
+
+Or just call `AddWikidataReconciliation()` from the companion package — that does all of this for you.

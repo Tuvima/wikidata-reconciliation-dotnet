@@ -2,6 +2,8 @@
 
 Match text (names, titles, places) to Wikidata entities with confidence scoring.
 
+> **v2.0.0 note.** Reconciliation methods are owned by `reconciler.Reconcile` (a `ReconciliationService`). The top-level `reconciler.ReconcileAsync(...)` calls shown below still work as v1 delegation shims, but new code should prefer `reconciler.Reconcile.ReconcileAsync(...)` for clearer dependencies.
+
 ## Basic Usage
 
 ```csharp
@@ -10,13 +12,13 @@ using Tuvima.Wikidata;
 using var reconciler = new WikidataReconciler();
 
 // Simple lookup
-var results = await reconciler.ReconcileAsync("Douglas Adams");
+var results = await reconciler.Reconcile.ReconcileAsync("Douglas Adams");
 
 // With type filter — only match humans (Q5)
-var results = await reconciler.ReconcileAsync("Douglas Adams", "Q5");
+var results = await reconciler.Reconcile.ReconcileAsync("Douglas Adams", "Q5");
 
 // With type filter — only match literary works (Q7725634)
-var results = await reconciler.ReconcileAsync("1984", "Q7725634");
+var results = await reconciler.Reconcile.ReconcileAsync("1984", "Q7725634");
 ```
 
 ## Property Constraints
@@ -24,10 +26,10 @@ var results = await reconciler.ReconcileAsync("1984", "Q7725634");
 Supply known property values to improve scoring:
 
 ```csharp
-var results = await reconciler.ReconcileAsync(new ReconciliationRequest
+var results = await reconciler.Reconcile.ReconcileAsync(new ReconciliationRequest
 {
     Query = "Douglas Adams",
-    Type = "Q5",
+    Types = ["Q5"],
     Limit = 5,
     Properties =
     [
@@ -36,6 +38,8 @@ var results = await reconciler.ReconcileAsync(new ReconciliationRequest
     ]
 });
 ```
+
+> **v2.0 breaking change.** `ReconciliationRequest.Type` (singular) was removed. Use `Types = ["Q5"]` — the single-element list covers the common "one type" case. The `reconciler.ReconcileAsync("Douglas Adams", "Q5")` two-argument overload still works and wraps the type internally.
 
 Property values can be:
 
@@ -102,10 +106,10 @@ var results = await reconciler.ReconcileAsync(new ReconciliationRequest
 Reconcile multiple queries with automatic concurrency limiting (default: 5 concurrent requests):
 
 ```csharp
-var results = await reconciler.ReconcileBatchAsync([
-    new ReconciliationRequest { Query = "Douglas Adams", Type = "Q5" },
-    new ReconciliationRequest { Query = "Albert Einstein", Type = "Q5" },
-    new ReconciliationRequest { Query = "Nineteen Eighty-Four", Type = "Q7725634" },
+var results = await reconciler.Reconcile.ReconcileBatchAsync([
+    new ReconciliationRequest { Query = "Douglas Adams", Types = ["Q5"] },
+    new ReconciliationRequest { Query = "Albert Einstein", Types = ["Q5"] },
+    new ReconciliationRequest { Query = "Nineteen Eighty-Four", Types = ["Q7725634"] },
 ]);
 ```
 
@@ -196,10 +200,10 @@ var results = await reconciler.ReconcileAsync(new ReconciliationRequest
 Every result includes a detailed `Breakdown` explaining how the score was computed:
 
 ```csharp
-var results = await reconciler.ReconcileAsync(new ReconciliationRequest
+var results = await reconciler.Reconcile.ReconcileAsync(new ReconciliationRequest
 {
     Query = "Douglas Adams",
-    Type = "Q5",
+    Types = ["Q5"],
     Properties = [new PropertyConstraint("P27", "Q145")]
 });
 
@@ -213,21 +217,61 @@ Console.WriteLine($"Type penalty:   {b.TypePenaltyApplied}");
 
 ## Reverse Lookup by External ID
 
-Find an entity by ISBN, IMDB ID, ORCID, or any external identifier:
+Find an entity by ISBN, IMDB ID, ORCID, or any external identifier. This is the low-level primitive — for full Stage 2 resolution with edition pivoting and batch grouping, use `reconciler.Stage2.ResolveBatchAsync(...)` (v2.2+).
 
 ```csharp
-var results = await reconciler.LookupByExternalIdAsync("P214", "113230702"); // VIAF
-var results = await reconciler.LookupByExternalIdAsync("P212", "978-0-345-39180-3"); // ISBN
-var results = await reconciler.LookupByExternalIdAsync("P345", "tt0371724"); // IMDB
+var results = await reconciler.Entities.LookupByExternalIdAsync("P214", "113230702"); // VIAF
+var results = await reconciler.Entities.LookupByExternalIdAsync("P212", "978-0-345-39180-3"); // ISBN
+var results = await reconciler.Entities.LookupByExternalIdAsync("P345", "tt0371724"); // IMDB
 ```
+
+## Unified Stage 2 Resolve (v2.2)
+
+For workflows that combine bridge IDs, music albums, and type-filtered text in one batch — with automatic deduplication and optional edition-to-work pivoting — see `reconciler.Stage2`:
+
+```csharp
+var bridge = Stage2Request.Bridge(
+    correlationKey: "book-42",
+    bridgeIds: new Dictionary<string, string> { ["isbn13"] = "9780441172719" },
+    wikidataProperties: new Dictionary<string, string> { ["isbn13"] = "P212" },
+    editionPivot: new EditionPivotRule
+    {
+        WorkClasses = ["Q7725634"],
+        EditionClasses = ["Q3331189", "Q122731938"]
+    });
+
+var text = Stage2Request.Text("tv-12", "Breaking Bad", ["Q5398426"]);
+
+var results = await reconciler.Stage2.ResolveBatchAsync([bridge, text]);
+```
+
+See the changelog and `docs/migrating-to-v2.md` for the full Stage 2 design.
 
 ## Direct QID Lookup
 
 If you already have a QID:
 
 ```csharp
-var results = await reconciler.ReconcileAsync("Q42");
+var results = await reconciler.Reconcile.ReconcileAsync("Q42");
 // results[0].Id == "Q42", Score == 100
+```
+
+If you just need the display label without full reconciliation, use `reconciler.Labels.GetAsync("Q42")` instead — one round-trip, no scoring.
+
+## Person Search with Role Awareness (v2.1)
+
+For named-entity person resolution with role-based occupation filtering and optional musical-group inclusion:
+
+```csharp
+var result = await reconciler.Persons.SearchAsync(new PersonSearchRequest
+{
+    Name = "Stephen King",
+    Role = PersonRole.Author,
+    BirthYearHint = 1947
+});
+
+if (result.Found)
+    Console.WriteLine($"{result.CanonicalName} ({result.Qid})");
 ```
 
 ## Result Object

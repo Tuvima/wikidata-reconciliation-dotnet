@@ -1,9 +1,23 @@
 # Architecture
 
-## Component Overview
+## Component Overview (v2.0.0+)
+
+`WikidataReconciler` is a thin **facade** that owns a shared `ReconcilerContext` (HttpClient, options, collaborator instances, global concurrency limiter) and exposes nine focused **sub-services** as properties. Each sub-service owns a slice of the API surface and can be injected independently in DI without going through the facade.
 
 ```
-WikidataReconciler (public entry point)
+WikidataReconciler (facade, owns ReconcilerContext)
+├── Reconcile  → ReconciliationService   reconcile + batch + stream + suggest
+├── Entities   → EntityService           entities, properties, external ID, labels, images, revisions, changes
+├── Wikipedia  → WikipediaService        URLs, summaries, sections, subsection extraction
+├── Editions   → EditionService          P747 editions, P629 work-for-edition
+├── Children   → ChildrenService         generic TraverseChildrenAsync + ChildEntityManifest builder
+├── Authors    → AuthorsService          multi-author split + pen-name resolution
+├── Labels     → LabelsService           single + batch label lookup with fallback chain
+├── Persons    → PersonsService          role-aware person search with occupation filtering  [v2.1]
+└── Stage2     → Stage2Service           unified bridge/music/text resolver with discriminated requests  [v2.2]
+
+Shared internals (Tuvima.Wikidata.Internal):
+├── ReconcilerContext           <- shared state holder for facade and all sub-services
 ├── WikidataSearchClient        <- dual search: wbsearchentities + full-text
 ├── WikidataEntityFetcher       <- wbgetentities in batches of 50, rank-aware
 ├── ReconciliationScorer        <- weighted label + property scoring
@@ -23,6 +37,8 @@ EntityGraph (graph module)
 ├── LINQ cross-media            <- FindCrossMediaEntities
 └── BFS subgraph extraction     <- GetSubgraph
 ```
+
+All v1 top-level methods on `WikidataReconciler` remain as delegating shims that forward to the owning sub-service, so existing v1 call sites compile unchanged. New code should prefer `reconciler.Reconcile.ReconcileAsync(...)` over `reconciler.ReconcileAsync(...)` for clearer dependencies and DI ergonomics.
 
 ## Reconciliation Pipeline (4 Stages)
 
@@ -73,6 +89,8 @@ Candidates are checked against the requested type (P31 direct match) and exclude
 - **Concurrency limiting** — `SemaphoreSlim` gates parallel API requests (default 5) to avoid Wikimedia rate limits.
 - **maxlag parameter** — appended to every Wikidata API request per Wikimedia bot etiquette.
 - **Graph module: no RDF** — the graph module uses adjacency lists and BFS, not RDF/SPARQL. The operations (pathfinding, family trees, cross-media detection) don't require a full graph database.
+- **Facade + sub-services (v2.0)** — the root `WikidataReconciler` is a thin facade over nine focused sub-services. The shared `ReconcilerContext` ensures all services use the same HttpClient, options, and global concurrency limiter. Sub-services are constructed once at facade init and exposed as properties; they are also registered individually by `AddWikidataReconciliation()` so DI consumers can inject a narrow slice.
+- **Discriminated Stage 2 requests (v2.2)** — the Stage 2 resolver uses a marker interface `IStage2Request` with three sealed concrete implementations (`BridgeStage2Request`, `MusicStage2Request`, `TextStage2Request`) instead of a single struct with mutually-exclusive fields. The strategy is the type; illegal combinations are unrepresentable; `TextStage2Request.CirrusSearchTypes` is `required` and validated non-empty at resolve time.
 
 ## Wikidata API Endpoints Used
 

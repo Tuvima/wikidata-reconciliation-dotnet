@@ -1,5 +1,16 @@
 # Changelog
 
+## v2.2.2
+
+Patch release — docs-only.
+
+Brings the `docs/` guides in line with the v2.0 facade + sub-services surface. No code changes.
+
+- **`docs/architecture.md`** — replaced the v1 monolithic component diagram with the v2 facade + nine-sub-service layout. Added a design-decisions bullet for the facade pattern and one for Stage 2's discriminated request hierarchy.
+- **`docs/entity-data.md`** — every example now calls the sub-service form (`reconciler.Entities.GetEntitiesAsync`, `reconciler.Wikipedia.GetWikipediaSummariesAsync`, etc.). Added sections for `reconciler.Labels`, the `Children.TraverseChildrenAsync` + `GetChildEntitiesAsync` manifest builder, and `Authors.ResolveAsync` (with a callout that the v1 `GetAuthorPseudonymsAsync` + `PseudonymInfo` were removed).
+- **`docs/reconciliation.md`** — every example now uses `reconciler.Reconcile.ReconcileAsync(...)`. Every `Type = "Q5"` occurrence was replaced with `Types = ["Q5"]`. Added callouts for the breaking `Type → Types` change, the `reconciler.Stage2` unified resolver, the `reconciler.Labels` shortcut for display-label lookups, and `reconciler.Persons.SearchAsync` for role-aware person resolution.
+- **`docs/aspnetcore.md`** — documents that `AddWikidataReconciliation()` now also registers every sub-service as a singleton, so consumers can inject a narrow slice (`LabelsService`, `AuthorsService`, `Stage2Service`, etc.) instead of the whole facade. Added a manual-registration example for the sub-services.
+
 ## v2.2.1
 
 Patch release — test-only changes.
