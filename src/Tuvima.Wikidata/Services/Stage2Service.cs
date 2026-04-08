@@ -271,6 +271,11 @@ public sealed class Stage2Service
             return editions.OrderBy(e => QidNumber(e.EntityId)).FirstOrDefault();
         }
 
+        // Epsilon for float-score tiebreaking. Ranking hint scores come from integer fuzzy
+        // ratios divided by float weights so exact-equality on two different candidates is
+        // possible but not guaranteed — use a tolerance rather than strict equality.
+        const double ScoreEpsilon = 1e-9;
+
         EditionInfo? best = null;
         double bestScore = double.MinValue;
 
@@ -305,12 +310,17 @@ public sealed class Stage2Service
 
             var normalizedScore = weightSum > 0 ? score / weightSum : 0.0;
 
-            if (normalizedScore > bestScore ||
-                (normalizedScore == bestScore &&
-                 best is not null &&
-                 QidNumber(edition.EntityId) < QidNumber(best.EntityId)))
+            if (normalizedScore > bestScore + ScoreEpsilon)
             {
+                // Strictly better than the current best.
                 bestScore = normalizedScore;
+                best = edition;
+            }
+            else if (best is not null &&
+                     Math.Abs(normalizedScore - bestScore) < ScoreEpsilon &&
+                     QidNumber(edition.EntityId) < QidNumber(best.EntityId))
+            {
+                // Tied within epsilon — QID number ascending as deterministic tiebreaker.
                 best = edition;
             }
         }

@@ -93,5 +93,35 @@ public class AuthorsIntegrationTests : IDisposable
         Assert.Null(result.Authors[0].Qid);
     }
 
+    [Fact]
+    public async Task ResolveAsync_StephenKing_PopulatesPseudonymsFromP742()
+    {
+        // Stephen King (Q39829) has a well-established P742 (pseudonym) = "Richard Bachman".
+        var result = await _reconciler.Authors.ResolveAsync(new AuthorResolutionRequest
+        {
+            RawAuthorString = "Stephen King",
+            DetectPseudonyms = true
+        });
+
+        Assert.Single(result.Authors);
+        var author = result.Authors[0];
+        Assert.Equal("Q39829", author.Qid);
+        Assert.NotNull(author.Pseudonyms);
+        Assert.Contains(author.Pseudonyms!, p => p.Contains("Richard Bachman", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task ResolveAsync_WithoutPseudonymDetection_PseudonymsIsNull()
+    {
+        var result = await _reconciler.Authors.ResolveAsync(new AuthorResolutionRequest
+        {
+            RawAuthorString = "Stephen King",
+            DetectPseudonyms = false
+        });
+
+        Assert.Single(result.Authors);
+        Assert.Null(result.Authors[0].Pseudonyms);
+    }
+
     public void Dispose() => _reconciler.Dispose();
 }

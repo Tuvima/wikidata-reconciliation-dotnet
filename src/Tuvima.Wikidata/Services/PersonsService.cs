@@ -67,8 +67,10 @@ public sealed class PersonsService
             types.Add(MusicalEnsembleType);
         }
 
-        // Build property constraints from role, year, and companion hints.
-        var constraints = BuildConstraints(request);
+        // Build property constraints from role and year hints. The P106 occupation constraint
+        // is skipped when musical groups are included because groups don't carry P106 claims
+        // and the constraint would unfairly penalise them during scoring.
+        var constraints = BuildConstraints(request, includeGroups);
 
         var reconcileRequest = new ReconciliationRequest
         {
@@ -85,6 +87,15 @@ public sealed class PersonsService
         if (matches.Count == 0)
         {
             return new PersonSearchResult { Found = false, Score = 0.0 };
+        }
+
+        // Optional companion-hint re-ranking: boost candidates whose P800 (notable work)
+        // labels fuzzy-match any of the supplied companion names. One extra API round-trip
+        // when hints are set; no-op otherwise.
+        if (request.CompanionNameHints is { Count: > 0 } hints && matches.Count > 1)
+        {
+            matches = await ReRankByCompanionHintsAsync(matches, hints, language, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         var best = matches[0];
@@ -141,12 +152,15 @@ public sealed class PersonsService
         };
     }
 
-    private static List<PropertyConstraint> BuildConstraints(PersonSearchRequest request)
+    private static List<PropertyConstraint> BuildConstraints(PersonSearchRequest request, bool includeGroups)
     {
         var constraints = new List<PropertyConstraint>();
 
-        // P106 (occupation) constraint based on role.
-        if (request.Role != PersonRole.Unknown &&
+        // P106 (occupation) constraint based on role. Skipped when musical groups are included
+        // because groups don't have P106 claims — the constraint would drag group candidates
+        // below the accept threshold even when they are the correct answer.
+        if (!includeGroups &&
+            request.Role != PersonRole.Unknown &&
             RoleOccupations.TryGetValue(request.Role, out var occupations))
         {
             constraints.Add(new PropertyConstraint("P106", occupations));
@@ -170,10 +184,86 @@ public sealed class PersonsService
             constraints.Add(new PropertyConstraint("P570", $"{request.DeathYearHint.Value:D4}-01-01"));
         }
 
-        // Companion names — unlike the other hints, we can't directly express "a P800 that references
-        // an entity labelled X" as a PropertyConstraint. Companion hints currently feed the title hint
-        // via the reconciler's label scoring pool when available. A stronger integration is a v2.3 enhancement.
-
         return constraints;
+    }
+
+    /// <summary>
+    /// Re-ranks the top reconciliation candidates by how well their P800 (notable work) labels
+    /// fuzzy-match the supplied companion name hints. One extra <c>wbgetentities</c> call fetches
+    /// the candidates' P800 claims; a second batch call fetches labels for the referenced notable
+    /// works; then each candidate's score is boosted by 10 points per hint that matches one of
+    /// its notable works (token-sort ratio ≥ 75). Ties and non-matches fall back to the original
+    /// ordering.
+    /// </summary>
+    private async Task<IReadOnlyList<ReconciliationResult>> ReRankByCompanionHintsAsync(
+        IReadOnlyList<ReconciliationResult> matches,
+        IReadOnlyList<string> hints,
+        string language,
+        CancellationToken cancellationToken)
+    {
+        // Fetch each candidate's entity data so we can read P800 (notable work) claims.
+        var candidateQids = matches.Select(m => m.Id).ToList();
+        var candidateEntities = await _ctx.EntityFetcher
+            .FetchEntitiesAsync(candidateQids, language, cancellationToken)
+            .ConfigureAwait(false);
+
+        // Collect all distinct notable-work QIDs referenced across candidates.
+        var candidateWorks = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        var allWorkIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var qid in candidateQids)
+        {
+            if (!candidateEntities.TryGetValue(qid, out var entity))
+            {
+                candidateWorks[qid] = new List<string>();
+                continue;
+            }
+
+            var works = WikidataEntityFetcher.GetClaimValues(entity, "P800")
+                .Select(dv => EntityMapper.MapDataValue(dv, "wikibase-item"))
+                .Where(v => v.Kind == WikidataValueKind.EntityId && !string.IsNullOrEmpty(v.EntityId))
+                .Select(v => v.EntityId!)
+                .ToList();
+
+            candidateWorks[qid] = works;
+            foreach (var w in works)
+                allWorkIds.Add(w);
+        }
+
+        if (allWorkIds.Count == 0)
+            return matches;
+
+        // Batch-fetch labels for all referenced notable works in one call.
+        var workLabels = await _labels.GetBatchAsync(allWorkIds.ToList(), language, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+
+        // Rescore each candidate by companion hit count, then stable-sort.
+        var scored = matches.Select(m =>
+        {
+            var works = candidateWorks[m.Id];
+            var workLabelList = works
+                .Select(w => workLabels.TryGetValue(w, out var l) ? l : null)
+                .Where(l => !string.IsNullOrEmpty(l))
+                .Select(l => l!)
+                .ToList();
+
+            var hitCount = 0;
+            foreach (var hint in hints)
+            {
+                foreach (var label in workLabelList)
+                {
+                    if (FuzzyMatcher.TokenSortRatio(label, hint) >= 75)
+                    {
+                        hitCount++;
+                        break;
+                    }
+                }
+            }
+
+            return (Match: m, BoostedScore: m.Score + hitCount * 10.0);
+        }).ToList();
+
+        scored.Sort((a, b) => b.BoostedScore.CompareTo(a.BoostedScore));
+        return scored.Select(s => s.Match).ToList();
     }
 }

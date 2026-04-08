@@ -84,7 +84,7 @@ src/
 │   ├── EditionInfo.cs                       # EntityId, Label, Description, Types, Claims (P747 edition data)
 │   ├── AuthorResolutionRequest.cs           # Authors.ResolveAsync input: RawAuthorString, WorkQidHint, Language, DetectPseudonyms
 │   ├── AuthorResolutionResult.cs            # Authors.ResolveAsync output: Authors, UnresolvedNames
-│   ├── ResolvedAuthor.cs                    # Per-author result: OriginalName, Qid, CanonicalName, RealNameQid, Confidence
+│   ├── ResolvedAuthor.cs                    # Per-author result: OriginalName, Qid, CanonicalName, RealNameQid, Pseudonyms (v2.3), Confidence
 │   ├── PersonRole.cs                        # Enum for Persons.SearchAsync: Author|Narrator|Director|Actor|VoiceActor|Composer|Performer|Artist|Screenwriter (v2.1)
 │   ├── PersonSearchRequest.cs               # Persons.SearchAsync input: Name, Role, TitleHint, WorkQid, IncludeMusicalGroups, BirthYearHint, DeathYearHint, CompanionNameHints, ExpandGroupMembers, AcceptThreshold (v2.1)
 │   ├── PersonSearchResult.cs                # Persons.SearchAsync output: Found, Qid, CanonicalName, IsGroup, Score, Occupations, NotableWorks, GroupMembers (v2.1)

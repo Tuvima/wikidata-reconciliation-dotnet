@@ -95,5 +95,41 @@ public class ChildrenIntegrationTests : IDisposable
         Assert.NotEmpty(manifest.Children);
     }
 
+    [Fact]
+    public async Task GetChildEntitiesAsync_MusicTracksPreset_ReturnsManifest()
+    {
+        // "OK Computer" by Radiohead (Q213754) — well-established album with tracks in Wikidata.
+        // Smoke test: verify the preset code path runs, returns a manifest, and doesn't throw.
+        // Track count isn't pinned because Wikidata coverage of individual tracks varies.
+        var manifest = await _reconciler.Children.GetChildEntitiesAsync(new ChildEntityRequest
+        {
+            ParentQid = "Q213754",
+            Kind = ChildEntityKind.MusicTracks,
+            MaxPrimary = 20,
+            MaxTotal = 20
+        });
+
+        Assert.Equal("Q213754", manifest.ParentQid);
+        Assert.NotNull(manifest.Children);
+        Assert.True(manifest.Children.Count <= 20);
+    }
+
+    [Fact]
+    public async Task GetChildEntitiesAsync_BookSequelsPreset_ReturnsManifest()
+    {
+        // "The Hitchhiker's Guide to the Galaxy" (Q25169) — first novel in a well-known
+        // sequel chain. P156 (followed by) should resolve to at least one sequel.
+        var manifest = await _reconciler.Children.GetChildEntitiesAsync(new ChildEntityRequest
+        {
+            ParentQid = "Q25169",
+            Kind = ChildEntityKind.BookSequels,
+            MaxPrimary = 10,
+            MaxTotal = 10
+        });
+
+        Assert.Equal("Q25169", manifest.ParentQid);
+        Assert.NotNull(manifest.Children);
+    }
+
     public void Dispose() => _reconciler.Dispose();
 }

@@ -130,5 +130,32 @@ public class Stage2IntegrationTests : IDisposable
         Assert.Equal(Stage2MatchedStrategy.NotResolved, result.MatchedBy);
     }
 
+    [Fact]
+    public async Task ResolveAsync_Bridge_WithEditionPivot_SmokeTest()
+    {
+        // Smoke test for the EditionPivotRule code path. Resolves an IMDB ID and supplies
+        // both WorkClasses and EditionClasses so the pivot logic runs end-to-end. We don't
+        // pin the resulting QID or IsEdition flag because Wikidata's IMDB-ID graph can
+        // return multiple candidates (series, seasons, episodes) and the first hit is not
+        // deterministic. The test verifies that the pivot path executes without throwing
+        // and produces a coherent result (Found=true, valid Qid, MatchedBy=BridgeId).
+        var result = await _reconciler.Stage2.ResolveAsync(Stage2Request.Bridge(
+            correlationKey: "pivot-smoke",
+            bridgeIds: new Dictionary<string, string> { ["imdb"] = "tt0903747" },
+            wikidataProperties: new Dictionary<string, string> { ["imdb"] = "P345" },
+            editionPivot: new EditionPivotRule
+            {
+                WorkClasses = ["Q5398426", "Q15416"],              // TV series, TV program
+                EditionClasses = ["Q21191270", "Q1261214"]          // TV episode, TV series episode
+            }));
+
+        Assert.True(result.Found);
+        Assert.Equal(Stage2MatchedStrategy.BridgeId, result.MatchedBy);
+        Assert.NotNull(result.Qid);
+        // WorkQid should always be populated when Found is true — either the resolved entity
+        // itself (when no pivot was needed) or the parent work (when the edition → work pivot fired).
+        Assert.NotNull(result.WorkQid);
+    }
+
     public void Dispose() => _reconciler.Dispose();
 }

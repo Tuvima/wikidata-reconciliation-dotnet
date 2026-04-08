@@ -35,19 +35,17 @@ public class PersonsIntegrationTests : IDisposable
     public async Task SearchAsync_PerformerRole_IncludesMusicalGroupsByDefault()
     {
         // Radiohead (Q7833) — distinctive group name. Verifies that the Performer role
-        // default includes Q215380/Q5741069 in the type filter, since the returned candidate
-        // must be a musical group rather than a human. Musical groups score lower than
-        // humans because they don't have P106 occupation claims for the role-based constraint,
-        // so we lower the accept threshold and don't pin the specific QID (the API can return
-        // close-scoring candidates in non-deterministic order).
+        // default includes Q215380/Q5741069 in the type filter and that the v2.3 P106
+        // constraint-skip fix lets musical groups score above the default 0.80 threshold.
+        // Prior to v2.3 the P106 occupation constraint would drag group candidates below
+        // threshold because groups don't carry P106 claims.
         var result = await _reconciler.Persons.SearchAsync(new PersonSearchRequest
         {
             Name = "Radiohead",
-            Role = PersonRole.Performer,
-            AcceptThreshold = 0.5
+            Role = PersonRole.Performer
         });
 
-        Assert.True(result.Found, $"Expected a match, got score {result.Score}");
+        Assert.True(result.Found, $"Expected a match at default threshold, got score {result.Score}");
         Assert.NotNull(result.CanonicalName);
         Assert.Contains("radiohead", result.CanonicalName!, StringComparison.OrdinalIgnoreCase);
     }
@@ -75,29 +73,21 @@ public class PersonsIntegrationTests : IDisposable
         {
             Name = "Radiohead",
             Role = PersonRole.Performer,
-            ExpandGroupMembers = true,
-            AcceptThreshold = 0.5
+            ExpandGroupMembers = true
         });
 
+        Assert.True(result.Found);
         if (result.IsGroup)
         {
             Assert.NotNull(result.GroupMembers);
             Assert.NotEmpty(result.GroupMembers!);
         }
-        // If the scorer happened to pick a human candidate this run, the test is a no-op
-        // for group-member population. This reflects the reality that reconciliation against
-        // a name like "Radiohead" can produce both human and group candidates and the best
-        // match can shift. The unit test suite covers the strict shape contract.
     }
 
     [Fact]
     public async Task SearchAsync_AuthorRole_FindsHuman()
     {
         // Douglas Adams with Author role resolves confidently on name + occupation alone.
-        // Year hints are exercised via the library's property constraint pipeline but aren't
-        // asserted end-to-end here because the fuzzy date matcher treats Jan-1 of a year
-        // hint differently from the actual birthdate, which can drag the score below the
-        // 0.80 default threshold when the hint's guessed month/day doesn't match.
         var result = await _reconciler.Persons.SearchAsync(new PersonSearchRequest
         {
             Name = "Douglas Adams",
@@ -106,6 +96,26 @@ public class PersonsIntegrationTests : IDisposable
 
         Assert.True(result.Found);
         Assert.Equal("Q42", result.Qid);
+    }
+
+    [Fact]
+    public async Task SearchAsync_AuthorWithCompanionHint_ReRanksTowardRightCandidate()
+    {
+        // Companion hint re-ranking smoke test. Searching for "Neil Gaiman" with Good Omens
+        // as a companion hint should bias scoring toward the author who actually has Good Omens
+        // in their notable works. We don't pin the specific winning QID (reconciler scoring can
+        // flip close candidates), only that the re-rank code path runs and the result is still
+        // a valid human match.
+        var result = await _reconciler.Persons.SearchAsync(new PersonSearchRequest
+        {
+            Name = "Neil Gaiman",
+            Role = PersonRole.Author,
+            CompanionNameHints = ["Good Omens", "American Gods"]
+        });
+
+        Assert.True(result.Found);
+        Assert.NotNull(result.Qid);
+        Assert.StartsWith("Q", result.Qid);
     }
 
     public void Dispose() => _reconciler.Dispose();

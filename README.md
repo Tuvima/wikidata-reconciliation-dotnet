@@ -115,6 +115,18 @@ The reconciliation pipeline has four stages: dual search, entity fetching, weigh
 
 [Architecture overview](docs/architecture.md) — pipeline stages, internal components, design decisions
 
+## What's New in v2.3.0
+
+Additive release closing out the library behavior gaps identified during v2.0–v2.2 integration testing.
+
+- **`PersonsService` musical-group scoring fix.** The P106 (occupation) constraint is now skipped when `IncludeMusicalGroups` is effectively true, so Performer/Artist role searches resolve groups like Daft Punk and Radiohead above the default `AcceptThreshold = 0.80` without workarounds.
+- **`PersonSearchRequest.CompanionNameHints` re-ranking is live.** The v2.1 structural signal is now wired to scoring — candidates get +10 per companion hint that fuzzy-matches one of their P800 (notable work) labels. One extra batch round-trip when hints are set; no-op otherwise.
+- **`LabelsService.GetBatchAsync` pre-filters malformed QIDs.** Previously Wikidata's `wbgetentities` would reject the whole batch if any single input was malformed, silently dropping every label. The service now filters to syntactically-valid QIDs before calling the API.
+- **`ResolvedAuthor.Pseudonyms`** — new field exposing P742 (pseudonym) string values on the resolved author. Looking up "Stephen King" with `DetectPseudonyms = true` now returns `["Richard Bachman"]`.
+- **`Stage2Service.PickBestEdition` uses epsilon comparison** for score tiebreaking instead of strict float equality.
+
+Integration test coverage expanded to 34 live-Wikidata tests (from 28), unit tests to 88 (from 85).
+
 ## What's New in v2.2.0
 
 Additive release — no breaking changes. Completes the original plan's primitive expansion.

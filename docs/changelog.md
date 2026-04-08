@@ -1,5 +1,37 @@
 # Changelog
 
+## v2.3.0
+
+Additive release — no breaking changes. Closes out the library behavior and test gaps
+identified during v2.0–v2.2 integration testing.
+
+### Library behavior fixes
+
+- **`PersonsService` no longer penalises musical groups with the P106 occupation constraint.** When `IncludeMusicalGroups` is effectively true (set explicitly, or inherited from the `Performer` / `Artist` role defaults), the service now skips the P106 (occupation) constraint entirely. Musical groups don't carry P106 claims, so the constraint was dragging group candidates below the default `AcceptThreshold` of 0.80 even when they were the correct answer. Previously required consumers to lower the threshold to ~0.5 to get groups; now works at the documented default.
+- **`PersonsService` companion-hint re-ranking is now live.** `PersonSearchRequest.CompanionNameHints` was a structural signal in v2.1 but not wired to scoring. v2.3 adds a post-reconciliation re-ranking pass: fetches the top candidates' P800 (notable work) claims, resolves labels in one batch call, and boosts each candidate by 10 points per companion hint that fuzzy-matches (token-sort ratio ≥ 75) one of their notable works. One extra API round-trip when hints are set, no-op otherwise.
+- **`LabelsService.GetBatchAsync` pre-filters malformed QIDs.** Wikidata's `wbgetentities` API rejects the entire batch if any single title is malformed — one bad input in a 100-QID batch used to drop every label. The service now filters the input to syntactically-valid QIDs (`Q\d+`) before calling the API. Invalid entries are absent from the result dictionary, same semantics as non-existent entities.
+- **`Stage2Service.PickBestEdition` uses epsilon comparison for score tiebreaking.** Strict float equality (`a == b`) was replaced with a tolerance-based check (`Math.Abs(a - b) < 1e-9`) for determining when two edition candidates are effectively tied. In practice this changes behavior only in the rare case where two editions produce identical fuzzy-match scores at different float encodings; QID-ascending tiebreaker then kicks in as documented.
+
+### New API surface
+
+- **`ResolvedAuthor.Pseudonyms`** (`IReadOnlyList<string>?`) — when `DetectPseudonyms = true` and the resolved author has P742 (pseudonym) claims, the raw string values are now exposed on the result. Looking up "Stephen King" populates this with `["Richard Bachman"]`. Replaces the lightweight v2.0 stub which only ever returned null. `RealNameQid` is retained on the DTO but currently always null — reserved for a future reverse-lookup implementation that finds the real author given a pseudonym string input.
+
+### Test coverage
+
+Integration test coverage expanded from 28 to 34 live-Wikidata integration tests:
+
+- `AuthorsIntegrationTests` — new tests for `Pseudonyms` population on Stephen King and verifying that `DetectPseudonyms = false` leaves the list null.
+- `ChildrenIntegrationTests` — new tests for the `MusicTracks` preset (OK Computer Q213754) and the `BookSequels` preset (Hitchhiker's Guide Q25169).
+- `PersonsIntegrationTests` — new companion-hint re-ranking smoke test. Daft Punk / Radiohead tests reverted to the default `AcceptThreshold = 0.80` (previously had to use 0.5 as a workaround for the P106 penalty that this release fixes).
+- `Stage2IntegrationTests` — new edition-pivot smoke test that exercises the `EditionPivotRule` code path with both `WorkClasses` and `EditionClasses` configured.
+
+Unit test coverage expanded from 85 to 88: `LabelsMalformedQidTests` adds three tests verifying the new filter semantics (all-malformed batch, empty string, bare "Q").
+
+### Deferred to future releases
+
+- **Reverse pseudonym lookup** — looking up "Richard Bachman" should populate `RealNameQid` with Stephen King's QID. Requires haswbstatement lookup on P742 string values; deferred because the CirrusSearch indexing story for string-typed claim values needs validation.
+- **Companion-hint first-page expansion** — the current re-ranking uses the reconciler's existing top-5 result list. A stronger integration would run a wider candidate search when hints are supplied.
+
 ## v2.2.2
 
 Patch release — docs-only.

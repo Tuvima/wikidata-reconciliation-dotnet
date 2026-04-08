@@ -70,10 +70,10 @@ public sealed class AuthorsService
                 continue;
             }
 
-            string? realNameQid = null;
+            IReadOnlyList<string>? pseudonyms = null;
             if (request.DetectPseudonyms)
             {
-                realNameQid = await DetectRealNameAsync(best.Id, lang, cancellationToken)
+                pseudonyms = await GetPseudonymsAsync(best.Id, lang, cancellationToken)
                     .ConfigureAwait(false);
             }
 
@@ -82,7 +82,8 @@ public sealed class AuthorsService
                 OriginalName = name,
                 Qid = best.Id,
                 CanonicalName = best.Name,
-                RealNameQid = realNameQid,
+                RealNameQid = null, // reserved for future reverse lookup; see remarks on ResolvedAuthor.Pseudonyms
+                Pseudonyms = pseudonyms,
                 Confidence = best.Score
             });
         }
@@ -95,15 +96,13 @@ public sealed class AuthorsService
     }
 
     /// <summary>
-    /// Looks up P742 (pseudonym) on the resolved author. If the resolved author has a P742 claim,
-    /// the author itself is the "real" name. If the resolved author IS a pseudonym literal, we
-    /// search for the owning real author via reverse haswbstatement lookup.
-    /// For v2.0 we use a lightweight heuristic: if the entity has a P742 claim, return null
-    /// (it IS the real author). If the entity has no P742 and its description mentions
-    /// "pseudonym" / "pen name", we cannot reliably resolve the owner in one call — we leave it null.
-    /// Stronger pen-name resolution is a v2.1 enhancement.
+    /// Reads P742 (pseudonym) claims from the resolved author and returns the raw string values.
+    /// Wikidata models pseudonyms as string claims on the owning real author rather than as
+    /// separate pseudonym entities, so looking up either "Stephen King" or "Richard Bachman"
+    /// typically resolves to the same QID (Q39829) — which has P742 = "Richard Bachman".
+    /// Returns null when the entity cannot be fetched or has no P742 claims.
     /// </summary>
-    private async Task<string?> DetectRealNameAsync(string qid, string language, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<string>?> GetPseudonymsAsync(string qid, string language, CancellationToken cancellationToken)
     {
         var entities = await _ctx.EntityFetcher.FetchEntitiesAsync([qid], language, cancellationToken)
             .ConfigureAwait(false);
@@ -111,16 +110,13 @@ public sealed class AuthorsService
         if (!entities.TryGetValue(qid, out var entity))
             return null;
 
-        // If the entity has its own P742 claims, it IS the real author — return null.
-        var ownPseudonyms = WikidataEntityFetcher.GetClaimValues(entity, "P742");
-        if (ownPseudonyms.Count > 0)
-            return null;
+        var pseudonyms = WikidataEntityFetcher.GetClaimValues(entity, "P742")
+            .Select(dv => EntityMapper.MapDataValue(dv, "string"))
+            .Where(v => !string.IsNullOrEmpty(v.RawValue))
+            .Select(v => v.RawValue)
+            .ToList();
 
-        // Reverse lookup: find any entity whose P742 equals this entity's label.
-        // Best-effort: if the entity's first label matches a known pseudonym string on another
-        // entity, we could resolve it — but haswbstatement on P742 (string value) is not
-        // reliably indexed. For v2.0 we skip this branch and return null.
-        return null;
+        return pseudonyms.Count > 0 ? pseudonyms : null;
     }
 
     /// <summary>

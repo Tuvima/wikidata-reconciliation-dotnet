@@ -63,7 +63,16 @@ public sealed class LabelsService
             return new Dictionary<string, string?>();
 
         var lang = language ?? _ctx.Options.Language;
-        var entities = await _ctx.EntityFetcher.FetchLabelsOnlyAsync(qids.ToList(), lang, cancellationToken)
+
+        // Pre-filter: Wikidata's wbgetentities API rejects the entire batch when any single
+        // title is malformed. Keep only syntactically-valid QIDs so one bad input in a large
+        // batch can't drop every label. Invalid QIDs are simply absent from the result —
+        // same semantics as entities that do not exist.
+        var validQids = qids.Where(IsValidQid).ToList();
+        if (validQids.Count == 0)
+            return new Dictionary<string, string?>();
+
+        var entities = await _ctx.EntityFetcher.FetchLabelsOnlyAsync(validQids, lang, cancellationToken)
             .ConfigureAwait(false);
 
         var result = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
@@ -85,5 +94,24 @@ public sealed class LabelsService
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Returns true when <paramref name="qid"/> is a syntactically valid Wikidata item ID
+    /// (e.g., "Q42"). Used to pre-filter batch input so a single malformed entry does not
+    /// cause the wbgetentities API to reject the whole batch.
+    /// </summary>
+    private static bool IsValidQid(string? qid)
+    {
+        if (string.IsNullOrEmpty(qid) || qid.Length < 2)
+            return false;
+        if (qid[0] != 'Q' && qid[0] != 'q')
+            return false;
+        for (var i = 1; i < qid.Length; i++)
+        {
+            if (!char.IsDigit(qid[i]))
+                return false;
+        }
+        return true;
     }
 }

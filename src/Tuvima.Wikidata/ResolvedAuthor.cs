@@ -28,6 +28,19 @@ public sealed class ResolvedAuthor
     public string? RealNameQid { get; init; }
 
     /// <summary>
+    /// The resolved entity's own P742 (pseudonym) claims as raw strings, when the author
+    /// uses one or more pen names. Populated by <see cref="Services.AuthorsService.ResolveAsync"/>
+    /// when <see cref="AuthorResolutionRequest.DetectPseudonyms"/> is true. Null otherwise.
+    /// </summary>
+    /// <remarks>
+    /// Wikidata typically models pseudonyms as P742 string values on the real author's entity
+    /// rather than as separate entities. If Stephen King (Q39829) has P742 = "Richard Bachman",
+    /// looking up either "Stephen King" or "Richard Bachman" will resolve to Q39829 and populate
+    /// this list with "Richard Bachman".
+    /// </remarks>
+    public IReadOnlyList<string>? Pseudonyms { get; init; }
+
+    /// <summary>
     /// The reconciliation score (0.0–100.0) that led to this match. Zero when unresolved.
     /// </summary>
     public double Confidence { get; init; }
