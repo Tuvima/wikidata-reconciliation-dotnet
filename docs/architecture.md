@@ -1,8 +1,8 @@
 # Architecture
 
-## Component Overview (v2.0.0+)
+## Component Overview (v2.5.0+)
 
-`WikidataReconciler` is a thin **facade** that owns a shared `ReconcilerContext` (HttpClient, options, collaborator instances, global concurrency limiter) and exposes nine focused **sub-services** as properties. Each sub-service owns a slice of the API surface and can be injected independently in DI without going through the facade.
+`WikidataReconciler` is a thin **facade** that owns a shared `ReconcilerContext` (HttpClient, options, collaborator instances, shared resilient request sender, global concurrency limiter) and exposes nine focused **sub-services** as properties. Each sub-service owns a slice of the API surface and can be injected independently in DI without going through the facade.
 
 ```
 WikidataReconciler (facade, owns ReconcilerContext)
@@ -23,7 +23,7 @@ Shared internals (Tuvima.Wikidata.Internal):
 ├── ReconciliationScorer        <- weighted label + property scoring
 ├── TypeChecker                 <- P31 matching + optional P279 subclass walking
 │   └── SubclassResolver        <- BFS P279 walker with in-memory cache
-├── ResilientHttpClient         <- retry-on-429, exponential backoff, maxlag
+├── ResilientHttpClient         <- shared request sender: maxlag, retries, Retry-After, real HTTP concurrency cap
 ├── EntityMapper                <- internal JSON DTO -> public model mapping
 ├── FuzzyMatcher                <- token-sort-ratio (Levenshtein-based)
 ├── PropertyMatcher             <- type-specific matching (items, dates, quantities, coords, URLs)
@@ -49,7 +49,7 @@ Two MediaWiki API searches run concurrently:
 - **`wbsearchentities`** (autocomplete): Matches labels and aliases directly. Fast and precise for well-known names.
 - **`action=query&list=search`** (full-text): Searches across all entity content. Finds items like "1984" where the label ("Nineteen Eighty-Four") differs from the query.
 
-Results are merged (full-text first, then autocomplete) and deduplicated. When types are specified, a CirrusSearch `haswbstatement:P31=QID` query also runs for better type recall. Multi-language search runs all languages concurrently. Queries are truncated at 250 characters to avoid silent failures from the MediaWiki API.
+Results are merged (full-text first, then autocomplete) and deduplicated. When types are specified, a CirrusSearch `haswbstatement:P31=QID` query also runs for better type recall. Multi-language search runs full-text once per query, then fans out only the `wbsearchentities` path per language. Queries are truncated at 250 characters to avoid silent failures from the MediaWiki API.
 
 ### 2. Entity Fetching
 
@@ -72,7 +72,7 @@ score = (label_score * 1.0 + sum(prop_score_i * 0.4)) / (1.0 + 0.4 * num_propert
 
 If a type constraint was specified and the entity has no type claims, the score is halved. The auto-match flag is set on the top result when the score exceeds the threshold and the gap over the second-best candidate is sufficient.
 
-For multi-value constraints, the property score is the average of the best match for each constraint value (e.g., 2 of 2 authors match = full score, 1 of 2 = half).
+For multi-value constraints, the property score is the average of the best match for each constraint value (e.g., 2 of 2 authors match = full score, 1 of 2 = half). Chained property constraints such as `P131/P17` are resolved end to end by fetching the intermediate entities and scoring the terminal property values.
 
 ### 4. Type Filtering
 
@@ -83,13 +83,14 @@ Candidates are checked against the requested type (P31 direct match) and exclude
 - **Zero external dependencies** — only `System.Text.Json` (built into .NET). No FuzzySharp, no Polly, no caching libraries.
 - **AOT compatible** — `IsAotCompatible` and `IsTrimmable` set in .csproj. All JSON serialization uses source-generated `JsonSerializerContext` (no reflection).
 - **No built-in cache** — deliberate; avoids stale data issues. Users add caching via `HttpClient` `DelegatingHandler` pattern.
-- **Dual search** — both `wbsearchentities` and full-text search run concurrently. Critical for recall (e.g., "1984" finds the novel whose label is "Nineteen Eighty-Four").
+- **Dual search** — both `wbsearchentities` and full-text search contribute to recall, but multi-language queries run the full-text pass only once and fan out only the autocomplete pass per language.
 - **Claim rank hierarchy** — preferred rank values used if available, then normal, deprecated always excluded.
 - **Language fallback chain** — exact -> subtag parent -> "mul" -> "en". API requests include all fallback languages.
-- **Concurrency limiting** — `SemaphoreSlim` gates parallel API requests (default 5) to avoid Wikimedia rate limits.
+- **Request-level concurrency limiting** — `SemaphoreSlim` gates actual outbound HTTP requests (default 5), not just top-level batch items, so every service path shares the same cap.
+- **Retry behavior** — transient `408`/`429`/`5xx` failures and transport errors are retried with backoff, and `Retry-After` is honored when the remote API asks the client to wait.
 - **maxlag parameter** — appended to every Wikidata API request per Wikimedia bot etiquette.
 - **Graph module: no RDF** — the graph module uses adjacency lists and BFS, not RDF/SPARQL. The operations (pathfinding, family trees, cross-media detection) don't require a full graph database.
-- **Facade + sub-services (v2.0)** — the root `WikidataReconciler` is a thin facade over nine focused sub-services. The shared `ReconcilerContext` ensures all services use the same HttpClient, options, and global concurrency limiter. Sub-services are constructed once at facade init and exposed as properties; they are also registered individually by `AddWikidataReconciliation()` so DI consumers can inject a narrow slice.
+- **Facade + sub-services (v2.0)** — the root `WikidataReconciler` is a thin facade over nine focused sub-services. The shared `ReconcilerContext` ensures all services use the same HttpClient, options, resilient request sender, and global concurrency limiter. Sub-services are constructed once at facade init and exposed as properties; they are also registered individually by `AddWikidataReconciliation()` so DI consumers can inject a narrow slice.
 - **Discriminated Stage 2 requests (v2.2)** — the Stage 2 resolver uses a marker interface `IStage2Request` with three sealed concrete implementations (`BridgeStage2Request`, `MusicStage2Request`, `TextStage2Request`) instead of a single struct with mutually-exclusive fields. The strategy is the type; illegal combinations are unrepresentable; `TextStage2Request.CirrusSearchTypes` is `required` and validated non-empty at resolve time.
 
 ## Wikidata API Endpoints Used

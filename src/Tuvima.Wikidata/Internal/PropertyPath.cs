@@ -37,29 +37,20 @@ internal sealed class PropertyPath
     /// For simple paths, returns values directly. For chained paths,
     /// resolves intermediate entity references using the fetcher.
     /// </summary>
-    public async Task<List<DataValue>> ResolveAsync(
+    public async Task<List<ResolvedPropertyValue>> ResolveAsync(
         WikidataEntity entity,
         WikidataEntityFetcher fetcher,
         string language,
         CancellationToken cancellationToken)
     {
-        var values = WikidataEntityFetcher.GetClaimValues(entity, _segments[0]);
+        var values = GetPropertyValues(entity, _segments[0]);
 
         if (!IsChained || values.Count == 0)
             return values;
 
         // For chained paths, resolve intermediate entities
         // Extract QIDs from the intermediate values
-        var intermediateIds = new List<string>();
-        foreach (var val in values)
-        {
-            if (val.Value is JsonElement element && element.TryGetProperty("id", out var idProp))
-            {
-                var id = idProp.GetString();
-                if (!string.IsNullOrEmpty(id))
-                    intermediateIds.Add(id);
-            }
-        }
+        var intermediateIds = ExtractEntityIds(values);
 
         if (intermediateIds.Count == 0)
             return [];
@@ -73,26 +64,17 @@ internal sealed class PropertyPath
         for (var i = 1; i < _segments.Length; i++)
         {
             var segment = _segments[i];
-            var result = new List<DataValue>();
+            var result = new List<ResolvedPropertyValue>();
 
             foreach (var ent in currentEntities)
             {
-                result.AddRange(WikidataEntityFetcher.GetClaimValues(ent, segment));
+                result.AddRange(GetPropertyValues(ent, segment));
             }
 
             if (i < _segments.Length - 1 && result.Count > 0)
             {
                 // More segments to resolve — extract QIDs and fetch
-                var nextIds = new List<string>();
-                foreach (var val in result)
-                {
-                    if (val.Value is JsonElement el && el.TryGetProperty("id", out var idp))
-                    {
-                        var id = idp.GetString();
-                        if (!string.IsNullOrEmpty(id))
-                            nextIds.Add(id);
-                    }
-                }
+                var nextIds = ExtractEntityIds(result);
 
                 if (nextIds.Count == 0)
                     return [];
@@ -109,4 +91,39 @@ internal sealed class PropertyPath
 
         return [];
     }
+
+    private static List<ResolvedPropertyValue> GetPropertyValues(WikidataEntity entity, string propertyId)
+    {
+        if (entity.Claims?.TryGetValue(propertyId, out var claims) != true || claims!.Count == 0)
+            return [];
+
+        var validClaims = claims
+            .Where(c => c.Rank != "deprecated" && c.MainSnak?.SnakType == "value" && c.MainSnak.DataValue != null)
+            .ToList();
+
+        var preferred = validClaims.Where(c => c.Rank == "preferred").ToList();
+        var source = preferred.Count > 0 ? preferred : validClaims.Where(c => c.Rank == "normal").ToList();
+
+        return source
+            .Select(c => new ResolvedPropertyValue(c.MainSnak!.DataValue!, c.MainSnak.DataType))
+            .ToList();
+    }
+
+    private static List<string> ExtractEntityIds(IEnumerable<ResolvedPropertyValue> values)
+    {
+        var ids = new List<string>();
+        foreach (var value in values)
+        {
+            if (value.DataValue.Value is JsonElement element && element.TryGetProperty("id", out var idProp))
+            {
+                var id = idProp.GetString();
+                if (!string.IsNullOrEmpty(id))
+                    ids.Add(id);
+            }
+        }
+
+        return ids;
+    }
 }
+
+internal readonly record struct ResolvedPropertyValue(DataValue DataValue, string? DataType);

@@ -172,7 +172,7 @@ public class MyService(LabelsService labels, AuthorsService authors)
 
 ## New primitives worth knowing about
 
-- **`Labels.GetBatchAsync(qids)`** returns `IReadOnlyDictionary<string, string?>` with every input QID present — `null` value means the entity exists but has no label in the requested language, absence means the entity doesn't exist. This fixes a v1 silent-drop in `GetPropertyLabelsAsync`.
+- **`Labels.GetBatchAsync(qids)`** returns `IReadOnlyDictionary<string, string?>` with every valid input QID present — `null` means the entity exists but has no label in the requested language, and absence means the entity was missing or the input was invalid. This fixes a v1 silent-drop in `GetPropertyLabelsAsync`.
 - **`Authors.ResolveAsync`** splits multi-author strings and flags pen names in one call. Handles `" and "`, `" & "`, `"; "`, `", "`, `" with "`, `"、"`, and `"et al."`. Recognizes `"Last, First"` single-name form.
 - **`Children.GetChildEntitiesAsync(ChildEntityRequest)`** bundles TV seasons + episodes (or music tracks, or comic issues, or book sequels) into a structured manifest with ordinal, release date, duration, and creator roles.
 

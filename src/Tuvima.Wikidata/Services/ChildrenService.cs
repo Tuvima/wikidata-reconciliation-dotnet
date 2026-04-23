@@ -37,6 +37,25 @@ public sealed class ChildrenService
         IReadOnlyList<string>? childProperties = null,
         string? language = null,
         CancellationToken cancellationToken = default)
+        => await TraverseChildrenInternalAsync(
+            parentQid,
+            relationshipProperty,
+            direction,
+            childTypeFilter,
+            childProperties,
+            ordinalProperty: "P1545",
+            language,
+            cancellationToken).ConfigureAwait(false);
+
+    private async Task<IReadOnlyList<ChildEntityInfo>> TraverseChildrenInternalAsync(
+        string parentQid,
+        string relationshipProperty,
+        Direction direction,
+        IReadOnlyList<string>? childTypeFilter,
+        IReadOnlyList<string>? childProperties,
+        string ordinalProperty,
+        string? language,
+        CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(parentQid);
         ArgumentException.ThrowIfNullOrWhiteSpace(relationshipProperty);
@@ -95,7 +114,7 @@ public sealed class ChildrenService
             LanguageFallback.TryGetValue(entity.Descriptions, lang, out var description);
 
             int? ordinal = null;
-            var ordinalValues = WikidataEntityFetcher.GetClaimValues(entity, "P1545");
+            var ordinalValues = WikidataEntityFetcher.GetClaimValues(entity, ordinalProperty);
             if (ordinalValues.Count > 0)
             {
                 var ordinalValue = EntityMapper.MapDataValue(ordinalValues[0], "string");
@@ -308,12 +327,13 @@ public sealed class ChildrenService
         properties.Add("P577");
         properties.Add("P2047");
 
-        var children = await TraverseChildrenAsync(
+        var children = await TraverseChildrenInternalAsync(
             request.ParentQid, traversal.RelationshipProperty, traversal.Direction,
-            childTypeFilter: traversal.ChildTypeFilter,
-            childProperties: properties,
-            language: request.Language,
-            cancellationToken: ct).ConfigureAwait(false);
+            traversal.ChildTypeFilter,
+            properties,
+            traversal.OrdinalProperty,
+            request.Language,
+            ct).ConfigureAwait(false);
 
         var capped = children.Take(Math.Min(request.MaxPrimary, request.MaxTotal)).ToList();
 

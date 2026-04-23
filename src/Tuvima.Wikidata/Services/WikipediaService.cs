@@ -63,11 +63,11 @@ public sealed class WikipediaService
 
         var tasks = titleToQid.Select(async kvp =>
         {
-            await _ctx.ConcurrencyLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
                 var url = $"https://{language}.wikipedia.org/api/rest_v1/page/summary/{Uri.EscapeDataString(kvp.Key)}";
-                var json = await _ctx.HttpClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+                var json = await _ctx.ResilientClient.GetStringAsync(
+                    url, cancellationToken, applyMaxLag: false).ConfigureAwait(false);
                 var response = System.Text.Json.JsonSerializer.Deserialize(json,
                     WikidataJsonContext.Default.WikipediaSummaryResponse);
 
@@ -85,13 +85,13 @@ public sealed class WikipediaService
                     };
                 }
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch
             {
                 // Skip on failure
-            }
-            finally
-            {
-                _ctx.ConcurrencyLimiter.Release();
             }
             return null;
         });
@@ -136,13 +136,13 @@ public sealed class WikipediaService
 
         var tasks = qidToLangTitle.Select(async kvp =>
         {
-            await _ctx.ConcurrencyLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
                 var lang = kvp.Value.Language;
                 var title = kvp.Value.Title;
                 var url = $"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{Uri.EscapeDataString(title)}";
-                var json = await _ctx.HttpClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+                var json = await _ctx.ResilientClient.GetStringAsync(
+                    url, cancellationToken, applyMaxLag: false).ConfigureAwait(false);
                 var response = System.Text.Json.JsonSerializer.Deserialize(json,
                     WikidataJsonContext.Default.WikipediaSummaryResponse);
 
@@ -161,13 +161,13 @@ public sealed class WikipediaService
                     };
                 }
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch
             {
                 // Skip on failure
-            }
-            finally
-            {
-                _ctx.ConcurrencyLimiter.Release();
             }
             return null;
         });
@@ -205,12 +205,12 @@ public sealed class WikipediaService
 
         var tasks = titleToQid.Select(async kvp =>
         {
-            await _ctx.ConcurrencyLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
                 var url = $"https://{language}.wikipedia.org/w/api.php?action=parse" +
                           $"&page={Uri.EscapeDataString(kvp.Key)}&prop=tocdata&format=json";
-                var json = await _ctx.HttpClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+                var json = await _ctx.ResilientClient.GetStringAsync(url, cancellationToken)
+                    .ConfigureAwait(false);
                 var response = System.Text.Json.JsonSerializer.Deserialize(json,
                     WikidataJsonContext.Default.ParseResponse);
 
@@ -228,13 +228,13 @@ public sealed class WikipediaService
                         .ToList());
                 }
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch
             {
                 // Skip on failure
-            }
-            finally
-            {
-                _ctx.ConcurrencyLimiter.Release();
             }
             return (Qid: kvp.Value, Sections: (IReadOnlyList<WikipediaSection>?)null);
         });
@@ -347,7 +347,8 @@ public sealed class WikipediaService
             var url = $"https://{language}.wikipedia.org/w/api.php?action=parse" +
                       $"&page={Uri.EscapeDataString(pageTitle)}&section={sectionIndex}" +
                       "&prop=text&format=json";
-            var json = await _ctx.HttpClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            var json = await _ctx.ResilientClient.GetStringAsync(url, cancellationToken)
+                .ConfigureAwait(false);
             var response = System.Text.Json.JsonSerializer.Deserialize(json,
                 WikidataJsonContext.Default.ParseResponse);
 
@@ -356,6 +357,10 @@ public sealed class WikipediaService
 
             var text = HtmlTextExtractor.ExtractText(response.Parse.Text.Html);
             return string.IsNullOrWhiteSpace(text) ? null : text;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {

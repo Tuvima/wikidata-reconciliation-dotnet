@@ -38,7 +38,7 @@ public sealed class MyEntityPipeline(
 }
 ```
 
-All nine sub-services (`ReconciliationService`, `EntityService`, `WikipediaService`, `EditionService`, `ChildrenService`, `AuthorsService`, `LabelsService`, `PersonsService`, `Stage2Service`) resolve from the same root `WikidataReconciler`, so they share the same `HttpClient`, options, and global concurrency limiter.
+All nine sub-services (`ReconciliationService`, `EntityService`, `WikipediaService`, `EditionService`, `ChildrenService`, `AuthorsService`, `LabelsService`, `PersonsService`, `Stage2Service`) resolve from the same root `WikidataReconciler`, so they share the same `HttpClient`, options, resilient request sender, and global concurrency limiter.
 
 ## Endpoint Mapping
 
@@ -67,6 +67,8 @@ app.MapReconciliation("/api/reconcile", options =>
 | `GET /api/reconcile/preview?id=Q42` | HTML preview card (thumbnail, description, link) |
 
 All endpoints respect the `Accept-Language` header — a French browser automatically gets French labels without extra configuration.
+
+As of v2.5.0, POST batch reconciliation fans out independent queries in parallel, while the shared reconciler request sender still enforces the real outbound `MaxConcurrency` cap.
 
 ## Manual Registration (No Companion Package)
 

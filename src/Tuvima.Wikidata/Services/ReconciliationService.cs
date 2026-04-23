@@ -123,7 +123,14 @@ public sealed class ReconciliationService
             if (typeResult == TypeMatchResult.Excluded || typeResult == TypeMatchResult.NotMatched)
                 continue;
 
-            var scoring = _ctx.Scorer.Score(request.Query, entity, language, request.Properties, request.DiacriticInsensitive);
+            var scoring = await _ctx.Scorer.ScoreAsync(
+                request.Query,
+                entity,
+                language,
+                request.Properties,
+                _ctx.EntityFetcher,
+                cancellationToken,
+                request.DiacriticInsensitive).ConfigureAwait(false);
 
             var finalScore = scoring.Score;
             if (typeResult == TypeMatchResult.NoType && hasTypeConstraint)
@@ -184,12 +191,8 @@ public sealed class ReconciliationService
     public async Task<IReadOnlyList<IReadOnlyList<ReconciliationResult>>> ReconcileBatchAsync(
         IReadOnlyList<ReconciliationRequest> requests, CancellationToken cancellationToken = default)
     {
-        var results = new IReadOnlyList<ReconciliationResult>[requests.Count];
-
-        var tasks = requests.Select((request, index) => ThrottledReconcileAsync(request, index, results, cancellationToken));
-        await Task.WhenAll(tasks).ConfigureAwait(false);
-
-        return results;
+        var tasks = requests.Select(request => ReconcileAsync(request, cancellationToken));
+        return await Task.WhenAll(tasks).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -204,7 +207,7 @@ public sealed class ReconciliationService
         {
             var index = i;
             var request = requests[i];
-            tasks[i] = ThrottledReconcileWithIndexAsync(request, index, cancellationToken);
+            tasks[i] = ReconcileWithIndexAsync(request, index, cancellationToken);
         }
 
         var remaining = new HashSet<Task<(int Index, IReadOnlyList<ReconciliationResult> Results)>>(tasks);
@@ -264,35 +267,11 @@ public sealed class ReconciliationService
         string prefix, int limit = 7, string? language = null, CancellationToken cancellationToken = default)
         => SuggestAsync(prefix, limit, language, cancellationToken);
 
-    private async Task ThrottledReconcileAsync(
-        ReconciliationRequest request, int index,
-        IReadOnlyList<ReconciliationResult>[] results,
-        CancellationToken cancellationToken)
-    {
-        await _ctx.ConcurrencyLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            results[index] = await ReconcileAsync(request, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            _ctx.ConcurrencyLimiter.Release();
-        }
-    }
-
-    private async Task<(int Index, IReadOnlyList<ReconciliationResult> Results)> ThrottledReconcileWithIndexAsync(
+    private async Task<(int Index, IReadOnlyList<ReconciliationResult> Results)> ReconcileWithIndexAsync(
         ReconciliationRequest request, int index, CancellationToken cancellationToken)
     {
-        await _ctx.ConcurrencyLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            var results = await ReconcileAsync(request, cancellationToken).ConfigureAwait(false);
-            return (index, results);
-        }
-        finally
-        {
-            _ctx.ConcurrencyLimiter.Release();
-        }
+        var results = await ReconcileAsync(request, cancellationToken).ConfigureAwait(false);
+        return (index, results);
     }
 
     private static int CompareQids(string a, string b)

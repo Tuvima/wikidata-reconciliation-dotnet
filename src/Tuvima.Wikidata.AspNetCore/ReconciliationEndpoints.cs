@@ -50,14 +50,14 @@ public static class ReconciliationEndpoints
                 if (queries is null)
                     return Results.BadRequest("Invalid queries parameter");
 
-                var results = new Dictionary<string, List<W3cCandidate>>();
-
-                foreach (var (key, query) in queries)
+                var batched = await Task.WhenAll(queries.Select(async kvp =>
                 {
-                    var request = MapToRequest(query, acceptLanguage);
+                    var request = MapToRequest(kvp.Value, acceptLanguage);
                     var reconciled = await reconciler.ReconcileAsync(request, ctx.RequestAborted);
-                    results[key] = reconciled.Select(MapToCandidate).ToList();
-                }
+                    return (kvp.Key, Candidates: reconciled.Select(MapToCandidate).ToList());
+                }));
+
+                var results = batched.ToDictionary(item => item.Key, item => item.Candidates);
 
                 return Results.Json(results, W3cJsonContext.Default.DictionaryStringListW3cCandidate);
             }

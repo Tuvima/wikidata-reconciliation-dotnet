@@ -64,12 +64,12 @@ When you already have a QID and only need its display label, use `reconciler.Lab
 var label = await reconciler.Labels.GetAsync("Q42");                   // "Douglas Adams"
 var german = await reconciler.Labels.GetAsync("Q42", language: "de");  // fallback chain applies
 
-// Batch: returned dictionary contains every input QID
+// Batch: returned dictionary contains every valid input QID
 var labels = await reconciler.Labels.GetBatchAsync(["Q42", "Q5", "Q183"]);
 // labels["Q42"] = "Douglas Adams"
 // labels["Q5"]  = "human"
 // null values mean "entity exists but has no label in this language"
-// absent keys mean "entity does not exist"
+// absent keys mean "entity does not exist or the input was malformed"
 ```
 
 ## Wikipedia URLs
@@ -190,6 +190,8 @@ foreach (var change in changes)
     Console.WriteLine($"{change.EntityId} changed at {change.Timestamp} by {change.User}");
 ```
 
+As of v2.5.0, `GetRecentChangesAsync` follows continuation tokens, so long lookback windows are no longer truncated at the first page.
+
 ## Work-to-Edition Pivoting
 
 Navigate between works and their editions/translations:
@@ -259,6 +261,7 @@ var manifest = await reconciler.Children.GetChildEntitiesAsync(new ChildEntityRe
         RelationshipProperty = "P527",
         Direction = Direction.Outgoing,
         ChildTypeFilter = ["Q3464665"],
+        OrdinalProperty = "P1545",
         CreatorRoles = new Dictionary<string, string>
         {
             ["Director"] = "P57",
@@ -291,6 +294,8 @@ if (result.UnresolvedNames.Count > 0)
 ```
 
 Supported separators: `" and "`, `" & "`, `"; "`, `", "`, `" with "`, `"、"`. `"Last, First"` single-author form is detected heuristically and not split. Trailing `"et al."` (with common variants) is captured into `UnresolvedNames`.
+
+`WorkQidHint` adds bibliography context by preferring candidates whose `P800` (notable work) points at the supplied work.
 
 > **v2 breaking note.** The v1 `GetAuthorPseudonymsAsync(qid)` + `PseudonymInfo` DTO have been removed. If you already have a QID and just want its P742 claims, use `reconciler.Entities.GetPropertiesAsync([qid], ["P742"])`.
 

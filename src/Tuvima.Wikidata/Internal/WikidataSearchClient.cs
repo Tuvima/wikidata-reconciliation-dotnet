@@ -40,7 +40,7 @@ internal sealed class WikidataSearchClient
         var tasks = new List<Task<List<string>>>
         {
             SearchEntitiesAsync(searchQuery, language, fetchLimit, cancellationToken),
-            FullTextSearchAsync(searchQuery, language, fetchLimit, cancellationToken)
+            FullTextSearchAsync(searchQuery, fetchLimit, cancellationToken)
         };
 
         // If diacritic-insensitive and the stripped query differs, run additional searches
@@ -50,7 +50,7 @@ internal sealed class WikidataSearchClient
             if (!string.Equals(stripped, searchQuery, StringComparison.Ordinal))
             {
                 tasks.Add(SearchEntitiesAsync(stripped, language, fetchLimit, cancellationToken));
-                tasks.Add(FullTextSearchAsync(stripped, language, fetchLimit, cancellationToken));
+                tasks.Add(FullTextSearchAsync(stripped, fetchLimit, cancellationToken));
             }
         }
 
@@ -89,20 +89,64 @@ internal sealed class WikidataSearchClient
         string query, IReadOnlyList<string> languages, int limit,
         bool diacriticInsensitive = false, CancellationToken cancellationToken = default)
     {
-        var tasks = languages.Select(lang => SearchAsync(query, lang, limit, diacriticInsensitive, cancellationToken));
-        var allResults = await Task.WhenAll(tasks).ConfigureAwait(false);
+        if (QidPattern.IsMatch(query.Trim()))
+            return [query.Trim().ToUpperInvariant()];
+
+        var effectiveLanguages = languages
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (effectiveLanguages.Count == 0)
+            return await SearchAsync(query, _options.Language, limit, diacriticInsensitive, cancellationToken)
+                .ConfigureAwait(false);
+
+        var searchQuery = query.Length > 250 ? query[..250] : query;
+        var fetchLimit = Math.Min(2 * limit, 50);
+
+        var fullTextTask = FullTextSearchAsync(searchQuery, fetchLimit, cancellationToken);
+        var autocompleteTasks = effectiveLanguages
+            .Select(lang => SearchEntitiesAsync(searchQuery, lang, fetchLimit, cancellationToken))
+            .ToArray();
+
+        Task<List<string>>? strippedFullTextTask = null;
+        Task<List<string>>[] strippedAutocompleteTasks = [];
+
+        if (diacriticInsensitive)
+        {
+            var stripped = FuzzyMatcher.RemoveDiacritics(searchQuery);
+            if (!string.Equals(stripped, searchQuery, StringComparison.Ordinal))
+            {
+                strippedFullTextTask = FullTextSearchAsync(stripped, fetchLimit, cancellationToken);
+                strippedAutocompleteTasks = effectiveLanguages
+                    .Select(lang => SearchEntitiesAsync(stripped, lang, fetchLimit, cancellationToken))
+                    .ToArray();
+            }
+        }
+
+        var tasks = new List<Task>(autocompleteTasks.Length + strippedAutocompleteTasks.Length + 2)
+        {
+            fullTextTask
+        };
+        tasks.AddRange(autocompleteTasks);
+        if (strippedFullTextTask is not null)
+            tasks.Add(strippedFullTextTask);
+        tasks.AddRange(strippedAutocompleteTasks);
+
+        await Task.WhenAll(tasks).ConfigureAwait(false);
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var merged = new List<string>();
 
-        foreach (var results in allResults)
-        {
-            foreach (var id in results)
-            {
-                if (seen.Add(id))
-                    merged.Add(id);
-            }
-        }
+        AddUnique(await fullTextTask.ConfigureAwait(false), seen, merged);
+        if (strippedFullTextTask is not null)
+            AddUnique(await strippedFullTextTask.ConfigureAwait(false), seen, merged);
+
+        foreach (var task in autocompleteTasks)
+            AddUnique(await task.ConfigureAwait(false), seen, merged);
+
+        foreach (var task in strippedAutocompleteTasks)
+            AddUnique(await task.ConfigureAwait(false), seen, merged);
 
         return merged;
     }
@@ -229,7 +273,7 @@ internal sealed class WikidataSearchClient
         return response?.Search?.Select(r => r.Id).ToList() ?? [];
     }
 
-    private async Task<List<string>> FullTextSearchAsync(string query, string language, int limit, CancellationToken cancellationToken)
+    private async Task<List<string>> FullTextSearchAsync(string query, int limit, CancellationToken cancellationToken)
     {
         var url = $"{_options.ApiEndpoint}?action=query&list=search&srnamespace=0" +
                   $"&srlimit={limit}&srsearch={Uri.EscapeDataString(query)}&srwhat=text&format=json";

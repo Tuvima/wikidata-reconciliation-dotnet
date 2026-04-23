@@ -6,12 +6,21 @@ internal sealed class RecentChangesResponse
 {
     [JsonPropertyName("query")]
     public RcQuery? Query { get; set; }
+
+    [JsonPropertyName("continue")]
+    public RcContinue? Continue { get; set; }
 }
 
 internal sealed class RcQuery
 {
     [JsonPropertyName("recentchanges")]
     public List<RcEntry>? RecentChanges { get; set; }
+}
+
+internal sealed class RcContinue
+{
+    [JsonPropertyName("rccontinue")]
+    public string? RcContinueToken { get; set; }
 }
 
 internal sealed class RcEntry

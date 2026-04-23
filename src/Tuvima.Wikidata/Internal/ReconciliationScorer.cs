@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Tuvima.Wikidata.Internal.Json;
 
 namespace Tuvima.Wikidata.Internal;
@@ -20,8 +19,14 @@ internal sealed class ReconciliationScorer
     /// Scores a candidate entity against a reconciliation request.
     /// Returns both the overall score and a detailed breakdown.
     /// </summary>
-    public ScoringResult Score(string query, WikidataEntity entity, string language,
-        IReadOnlyList<PropertyConstraint>? properties, bool diacriticInsensitive = false)
+    public async Task<ScoringResult> ScoreAsync(
+        string query,
+        WikidataEntity entity,
+        string language,
+        IReadOnlyList<PropertyConstraint>? properties,
+        WikidataEntityFetcher fetcher,
+        CancellationToken cancellationToken,
+        bool diacriticInsensitive = false)
     {
         // Label matching: fuzzy match query against all labels + aliases across ALL languages, take max
         var allLabels = _options.IncludeSitelinkLabels
@@ -53,7 +58,8 @@ internal sealed class ReconciliationScorer
         {
             foreach (var prop in properties)
             {
-                var propScore = ScoreProperty(entity, prop);
+                var propScore = await ScorePropertyAsync(entity, prop, fetcher, language, cancellationToken)
+                    .ConfigureAwait(false);
                 propertyScores[prop.PropertyId] = propScore;
                 weightedSum += propScore * propertyWeight;
                 totalWeight += propertyWeight;
@@ -98,20 +104,19 @@ internal sealed class ReconciliationScorer
     /// For single-value constraints, returns the best match across all claim values.
     /// For multi-value constraints, returns the average of the best match for each constraint value.
     /// </summary>
-    private static int ScoreProperty(WikidataEntity entity, PropertyConstraint constraint)
+    private static async Task<int> ScorePropertyAsync(
+        WikidataEntity entity,
+        PropertyConstraint constraint,
+        WikidataEntityFetcher fetcher,
+        string language,
+        CancellationToken cancellationToken)
     {
-        // Use the root property for direct scoring (chained paths are resolved at the orchestrator level)
         var path = new PropertyPath(constraint.PropertyId);
-        var claimValues = WikidataEntityFetcher.GetClaimValues(entity, path.RootProperty);
+        var claimValues = await path.ResolveAsync(entity, fetcher, language, cancellationToken)
+            .ConfigureAwait(false);
 
         if (claimValues.Count == 0)
             return 0;
-
-        string? dataType = null;
-        if (entity.Claims?.TryGetValue(constraint.PropertyId, out var claims) == true)
-        {
-            dataType = claims.FirstOrDefault()?.MainSnak?.DataType;
-        }
 
         if (constraint.Values is not { Count: > 0 } effectiveValues)
             return 0;
@@ -124,7 +129,7 @@ internal sealed class ReconciliationScorer
             var bestScore = 0;
             foreach (var claimValue in claimValues)
             {
-                var score = PropertyMatcher.Match(constraintValue, claimValue, dataType);
+                var score = PropertyMatcher.Match(constraintValue, claimValue.DataValue, claimValue.DataType);
                 if (score > bestScore)
                     bestScore = score;
             }

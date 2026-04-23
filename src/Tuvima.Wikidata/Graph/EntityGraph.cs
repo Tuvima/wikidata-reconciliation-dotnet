@@ -156,12 +156,12 @@ public sealed class EntityGraph
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { characterQid };
 
         // Traverse ancestors (negative generations)
-        TraverseFamilyDirection(characterQid, -1, generations, parentRelationships,
-            isAncestor: true, result, visited);
+        TraverseFamilyDirection(characterQid, -1, generations, result, visited,
+            qid => GetAncestorEntities(qid, parentRelationships, childRelationships));
 
         // Traverse descendants (positive generations)
-        TraverseFamilyDirection(characterQid, 1, generations, childRelationships,
-            isAncestor: false, result, visited);
+        TraverseFamilyDirection(characterQid, 1, generations, result, visited,
+            qid => GetDescendantEntities(qid, parentRelationships, childRelationships));
 
         return result.ToDictionary(
             kvp => kvp.Key,
@@ -288,10 +288,9 @@ public sealed class EntityGraph
         string startQid,
         int directionSign,
         int maxGenerations,
-        IReadOnlySet<string> relationships,
-        bool isAncestor,
         Dictionary<int, List<string>> result,
-        HashSet<string> visited)
+        HashSet<string> visited,
+        Func<string, IEnumerable<string>> getRelatedEntities)
     {
         var currentGen = new List<string> { startQid };
 
@@ -301,16 +300,7 @@ public sealed class EntityGraph
 
             foreach (var qid in currentGen)
             {
-                // For ancestors: follow outgoing edges with parent relationship types
-                //   (e.g., "Paul Atreides" --father--> "Duke Leto")
-                // For descendants: follow outgoing edges with child relationship types
-                //   (e.g., "Duke Leto" --child--> "Paul Atreides")
-                // Also check incoming edges for the reverse direction
-                var candidates = isAncestor
-                    ? GetRelatedEntities(qid, relationships)
-                    : GetRelatedEntities(qid, relationships);
-
-                foreach (var candidate in candidates)
+                foreach (var candidate in getRelatedEntities(qid))
                 {
                     if (visited.Add(candidate))
                         nextGen.Add(candidate);
@@ -324,13 +314,16 @@ public sealed class EntityGraph
         }
     }
 
-    private IEnumerable<string> GetRelatedEntities(string qid, IReadOnlySet<string> relationships)
+    private IEnumerable<string> GetAncestorEntities(
+        string qid,
+        IReadOnlySet<string> parentRelationships,
+        IReadOnlySet<string> childRelationships)
     {
         if (_outgoing.TryGetValue(qid, out var outList))
         {
             foreach (var (target, rel) in outList)
             {
-                if (relationships.Contains(rel))
+                if (parentRelationships.Contains(rel))
                     yield return target;
             }
         }
@@ -339,7 +332,31 @@ public sealed class EntityGraph
         {
             foreach (var (source, rel) in inList)
             {
-                if (relationships.Contains(rel))
+                if (childRelationships.Contains(rel))
+                    yield return source;
+            }
+        }
+    }
+
+    private IEnumerable<string> GetDescendantEntities(
+        string qid,
+        IReadOnlySet<string> parentRelationships,
+        IReadOnlySet<string> childRelationships)
+    {
+        if (_outgoing.TryGetValue(qid, out var outList))
+        {
+            foreach (var (target, rel) in outList)
+            {
+                if (childRelationships.Contains(rel))
+                    yield return target;
+            }
+        }
+
+        if (_incoming.TryGetValue(qid, out var inList))
+        {
+            foreach (var (source, rel) in inList)
+            {
+                if (parentRelationships.Contains(rel))
                     yield return source;
             }
         }

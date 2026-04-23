@@ -1,5 +1,33 @@
 # Changelog
 
+## v2.5.0
+
+Minor release. Aligns the documented contract with the actual runtime behavior, improves reliability under real Wikimedia traffic, and removes a few no-op public hints.
+
+### Reliability and performance
+
+- **Shared resilient request path.** Wikidata and Wikipedia calls now flow through one `ResilientHttpClient` owned by `ReconcilerContext`. The shared sender applies the real outbound `MaxConcurrency` limit, retries transient `408`, `429`, `500`, `502`, `503`, and `504` responses, retries transport failures, and honors `Retry-After` when present.
+- **Cancellation now propagates correctly.** `WikipediaService` and `AuthorsService` rethrow `OperationCanceledException` instead of swallowing it inside their soft-fail fallbacks.
+- **`GetRecentChangesAsync` now paginates.** Recent-change monitoring follows `rccontinue` tokens until completion instead of silently truncating at the first page.
+- **Multi-language search is cheaper.** Reconciliation now runs full-text search once per query and only fans out `wbsearchentities` per language, preserving deterministic merge order while cutting duplicate requests.
+- **ASP.NET Core batch reconciliation now parallelizes independent queries.** The endpoint fans out batch items concurrently, while the shared HTTP limiter still caps actual outbound requests.
+
+### Behavior fixes and capability activation
+
+- **Chained property paths are now truly supported.** `PropertyConstraint` paths like `P131/P17` are resolved end to end during scoring by fetching intermediate entities and evaluating the terminal claims instead of inspecting only the root property.
+- **`AuthorResolutionRequest.WorkQidHint` now affects matching.** `AuthorsService.ResolveAsync` applies a `P800` notable-work constraint during the initial reconcile pass when the hint is provided.
+- **`PersonSearchRequest.TitleHint` now re-ranks candidates.** When explicit `CompanionNameHints` are absent, `TitleHint` now feeds the existing notable-work re-ranking path instead of being ignored.
+- **`CustomChildTraversal.OrdinalProperty` is now honored.** Custom child manifests can drive ordering from an explicit ordinal property instead of always defaulting to `P1545`.
+- **Stage 2 artist/author strings now resolve to QIDs before scoring.** Music requests resolve artists through `PersonsService`; text requests resolve authors through `AuthorsService`; unresolved free-text names are dropped instead of being applied as ineffective item-property constraints.
+- **Stage 2 bridge lookup avoids duplicate fetches.** Bridge-ID resolution now searches by external ID, fetches the entity once, and derives labels and collected bridge IDs from that single snapshot.
+- **`EntityGraph.GetFamilyTree` semantics are now strict.** Ancestors mean outgoing parent edges or incoming child edges; descendants mean outgoing child edges or incoming parent edges.
+
+### Tests and docs
+
+- **Stable integration fixtures.** Two brittle live tests that depended on deleted entity `Q190159` now use stable entity-valued-property fixtures on `Q42`.
+- **Validation expanded to 103 unit tests and 80 live integration tests.** Added focused tests for cancellation propagation, property-path scoring, title/work hints, custom ordinals, Stage 2 author/artist resolution, recent-changes pagination, and family-tree semantics.
+- **Documentation refreshed across `README.md`, `AGENTS.md`, and the usage guides.** The docs now describe the real `LabelsService` semantics (`null` = entity exists but has no label in that language; absent key = missing or invalid entity), request-level concurrency limiting, chained property-path support, Stage 2 behavior, and the stricter graph traversal contract.
+
 ## v2.4.1
 
 Patch release — performance fixes for `AuthorsService`. No API changes.

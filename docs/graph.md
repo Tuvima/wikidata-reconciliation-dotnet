@@ -95,6 +95,11 @@ var tree = graph.GetFamilyTree("Q937618",
 
 Default parent relationships: `{"father", "mother"}`. Default child relationships: `{"child"}`.
 
+As of v2.5.0, the direction rules are strict:
+
+- Ancestors = outgoing parent edges or incoming child edges.
+- Descendants = outgoing child edges or incoming parent edges.
+
 ## Cross-Media Entity Detection
 
 Find entities appearing in multiple works:

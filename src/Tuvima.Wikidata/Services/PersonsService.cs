@@ -92,7 +92,14 @@ public sealed class PersonsService
         // Optional companion-hint re-ranking: boost candidates whose P800 (notable work)
         // labels fuzzy-match any of the supplied companion names. One extra API round-trip
         // when hints are set; no-op otherwise.
-        if (request.CompanionNameHints is { Count: > 0 } hints && matches.Count > 1)
+        IReadOnlyList<string>? notableWorkHints = request.CompanionNameHints;
+        if ((notableWorkHints is null || notableWorkHints.Count == 0) &&
+            !string.IsNullOrWhiteSpace(request.TitleHint))
+        {
+            notableWorkHints = [request.TitleHint];
+        }
+
+        if (notableWorkHints is { Count: > 0 } hints && matches.Count > 1)
         {
             matches = await ReRankByCompanionHintsAsync(matches, hints, language, cancellationToken)
                 .ConfigureAwait(false);

@@ -39,6 +39,10 @@ This is the first .NET Wikidata reconciliation library, filling a gap in the eco
 | [`Tuvima.Wikidata`](https://www.nuget.org/packages/Tuvima.Wikidata) | Core library — reconciliation, entity data, Wikipedia content, graph traversal |
 | [`Tuvima.Wikidata.AspNetCore`](https://www.nuget.org/packages/Tuvima.Wikidata.AspNetCore) | ASP.NET Core middleware for hosting a W3C Reconciliation Service API |
 
+Current release: `2.5.0`
+
+Current validation: 103 unit tests + 80 live integration tests = 183 total.
+
 ## Installation
 
 ```
@@ -57,7 +61,7 @@ using Tuvima.Wikidata;
 using var reconciler = new WikidataReconciler();
 
 // Match text to a Wikidata entity
-var results = await reconciler.ReconcileAsync("Douglas Adams");
+var results = await reconciler.Reconcile.ReconcileAsync("Douglas Adams");
 
 Console.WriteLine(results[0].Id);          // "Q42"
 Console.WriteLine(results[0].Name);        // "Douglas Adams"
@@ -114,6 +118,22 @@ Tune scoring, concurrency, language, type hierarchy, and HTTP behavior.
 The reconciliation pipeline has four stages: dual search, entity fetching, weighted scoring, and type filtering.
 
 [Architecture overview](docs/architecture.md) — pipeline stages, internal components, design decisions
+
+## What's New in v2.5.0
+
+Minor release. The main theme is that the documented capabilities now line up with the real runtime behavior.
+
+- **Chained property constraints are now real end to end.** `new PropertyConstraint("P131/P17", "Q145")` now walks the intermediate entity path during scoring instead of only inspecting the root property.
+- **Shared HTTP reliability path.** Wikidata and Wikipedia calls now run through one `ResilientHttpClient` that applies the real outbound `MaxConcurrency` limit, retries transient 408/429/5xx failures, and honors `Retry-After` when the API sends it.
+- **`LabelsService` semantics are now documented accurately.** `GetBatchAsync` uses `null` for "entity exists but has no label in that language" and omits keys only when the entity is missing or the input is invalid.
+- **Cancellation now propagates correctly.** `WikipediaService` and `AuthorsService` no longer swallow `OperationCanceledException` during soft-fail paths.
+- **Long recent-change windows now paginate.** `GetRecentChangesAsync` follows continuation tokens instead of silently truncating after the first 500 rows.
+- **Public hints that existed on paper now affect results.** `AuthorResolutionRequest.WorkQidHint`, `PersonSearchRequest.TitleHint`, and `CustomChildTraversal.OrdinalProperty` are all wired into runtime behavior.
+- **Stage 2 is smarter and lighter.** Music artist strings now resolve through `PersonsService`, text author strings resolve through `AuthorsService`, bridge-ID resolution skips duplicate lookups, and batch work fans out in parallel while still respecting the shared HTTP limiter.
+- **Search fan-out is cheaper.** Multi-language reconciliation now runs full-text search once per query and only fans out the autocomplete path per language.
+- **Graph family trees have stricter semantics.** Ancestors now mean outgoing parent edges or incoming child edges; descendants mean outgoing child edges or incoming parent edges.
+
+Validation for this release: 103 unit tests and 80 live integration tests.
 
 ## What's New in v2.4.0
 

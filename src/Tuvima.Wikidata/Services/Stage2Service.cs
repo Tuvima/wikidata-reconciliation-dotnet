@@ -14,22 +14,22 @@ public sealed class Stage2Service
 {
     private readonly ReconcilerContext _ctx;
     private readonly ReconciliationService _reconcile;
-    private readonly EntityService _entities;
     private readonly EditionService _editions;
-    private readonly LabelsService _labels;
+    private readonly AuthorsService _authors;
+    private readonly PersonsService _persons;
 
     internal Stage2Service(
         ReconcilerContext ctx,
         ReconciliationService reconcile,
-        EntityService entities,
         EditionService editions,
-        LabelsService labels)
+        AuthorsService authors,
+        PersonsService persons)
     {
         _ctx = ctx;
         _reconcile = reconcile;
-        _entities = entities;
         _editions = editions;
-        _labels = labels;
+        _authors = authors;
+        _persons = persons;
     }
 
     /// <summary>
@@ -74,40 +74,35 @@ public sealed class Stage2Service
             }
         }
 
-        // --- Bridge phase ---
         var bridgeGroups = bridgeRequests
-            .GroupBy(r => BridgeGroupKey(r), StringComparer.OrdinalIgnoreCase);
-
-        foreach (var group in bridgeGroups)
-        {
-            var exemplar = group.First();
-            var result = await ResolveBridgeAsync(exemplar, cancellationToken).ConfigureAwait(false);
-            foreach (var req in group)
-                results[req.CorrelationKey] = result;
-        }
-
-        // --- Music phase ---
+            .GroupBy(r => BridgeGroupKey(r), StringComparer.OrdinalIgnoreCase)
+            .ToList();
         var musicGroups = musicRequests
-            .GroupBy(r => MusicGroupKey(r), StringComparer.OrdinalIgnoreCase);
-
-        foreach (var group in musicGroups)
-        {
-            var exemplar = group.First();
-            var result = await ResolveMusicAsync(exemplar, cancellationToken).ConfigureAwait(false);
-            foreach (var req in group)
-                results[req.CorrelationKey] = result;
-        }
-
-        // --- Text phase ---
+            .GroupBy(r => MusicGroupKey(r), StringComparer.OrdinalIgnoreCase)
+            .ToList();
         var textGroups = textRequests
-            .GroupBy(r => TextGroupKey(r), StringComparer.OrdinalIgnoreCase);
+            .GroupBy(r => TextGroupKey(r), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var resolutionTasks = new List<Task<IReadOnlyList<(string CorrelationKey, Stage2Result Result)>>>(
+            bridgeGroups.Count() + musicGroups.Count() + textGroups.Count());
 
-        foreach (var group in textGroups)
+        resolutionTasks.AddRange(bridgeGroups.Select(group => ResolveGroupAsync(
+            group.Select(req => req.CorrelationKey),
+            () => ResolveBridgeAsync(group.First(), cancellationToken))));
+
+        resolutionTasks.AddRange(musicGroups.Select(group => ResolveGroupAsync(
+            group.Select(req => req.CorrelationKey),
+            () => ResolveMusicAsync(group.First(), cancellationToken))));
+
+        resolutionTasks.AddRange(textGroups.Select(group => ResolveGroupAsync(
+            group.Select(req => req.CorrelationKey),
+            () => ResolveTextAsync(group.First(), cancellationToken))));
+
+        var resolvedGroups = await Task.WhenAll(resolutionTasks).ConfigureAwait(false);
+        foreach (var groupResults in resolvedGroups)
         {
-            var exemplar = group.First();
-            var result = await ResolveTextAsync(exemplar, cancellationToken).ConfigureAwait(false);
-            foreach (var req in group)
-                results[req.CorrelationKey] = result;
+            foreach (var (correlationKey, result) in groupResults)
+                results[correlationKey] = result;
         }
 
         return results;
@@ -160,12 +155,12 @@ public sealed class Stage2Service
             if (!req.WikidataProperties.TryGetValue(key, out var propertyId) || string.IsNullOrEmpty(propertyId))
                 continue;
 
-            var hits = await _entities.LookupByExternalIdAsync(propertyId, value, language, ct)
+            var hits = await _ctx.SearchClient.SearchByExternalIdAsync(propertyId, value, 10, ct)
                 .ConfigureAwait(false);
 
             if (hits.Count > 0)
             {
-                resolvedQid = hits[0].Id;
+                resolvedQid = hits[0];
                 matchedKey = key;
                 break;
             }
@@ -182,12 +177,13 @@ public sealed class Stage2Service
 
         var entityTypes = WikidataEntityFetcher.GetTypeIds(entity, _ctx.Options.TypePropertyId);
         var collected = CollectVerifiedBridgeIds(entity, req);
+        LanguageFallback.TryGetValue(entity.Labels, language, out var resolvedLabel);
 
         // Determine whether this is an edition and whether we should pivot.
         var workQid = resolvedQid;
         string? editionQid = null;
         var isEdition = false;
-        var label = await _labels.GetAsync(resolvedQid, language, cancellationToken: ct).ConfigureAwait(false);
+        var label = string.IsNullOrEmpty(resolvedLabel) ? resolvedQid : resolvedLabel;
 
         if (req.EditionPivot is { } pivot)
         {
@@ -344,7 +340,10 @@ public sealed class Stage2Service
         var constraints = new List<PropertyConstraint>();
         if (!string.IsNullOrWhiteSpace(req.Artist))
         {
-            constraints.Add(new PropertyConstraint("P175", req.Artist));
+            var artistConstraint = await ResolveArtistConstraintAsync(req.Artist, language, ct)
+                .ConfigureAwait(false);
+            if (artistConstraint is not null)
+                constraints.Add(artistConstraint);
         }
 
         var reconcileRequest = new ReconciliationRequest
@@ -388,7 +387,10 @@ public sealed class Stage2Service
         var constraints = new List<PropertyConstraint>();
         if (!string.IsNullOrWhiteSpace(req.Author))
         {
-            constraints.Add(new PropertyConstraint("P50", req.Author));
+            var authorConstraint = await ResolveAuthorConstraintAsync(req.Author, language, ct)
+                .ConfigureAwait(false);
+            if (authorConstraint is not null)
+                constraints.Add(authorConstraint);
         }
 
         var reconcileRequest = new ReconciliationRequest
@@ -419,5 +421,54 @@ public sealed class Stage2Service
             MatchedBy = Stage2MatchedStrategy.TextReconciliation,
             Label = best.Name
         };
+    }
+
+    private async Task<PropertyConstraint?> ResolveArtistConstraintAsync(
+        string artist,
+        string language,
+        CancellationToken cancellationToken)
+    {
+        var result = await _persons.SearchAsync(new PersonSearchRequest
+        {
+            Name = artist,
+            Role = PersonRole.Performer,
+            Language = language
+        }, cancellationToken).ConfigureAwait(false);
+
+        return result.Found && !string.IsNullOrEmpty(result.Qid)
+            ? new PropertyConstraint("P175", result.Qid)
+            : null;
+    }
+
+    private async Task<PropertyConstraint?> ResolveAuthorConstraintAsync(
+        string author,
+        string language,
+        CancellationToken cancellationToken)
+    {
+        var result = await _authors.ResolveAsync(new AuthorResolutionRequest
+        {
+            RawAuthorString = author,
+            Language = language
+        }, cancellationToken).ConfigureAwait(false);
+
+        var authorQids = result.Authors
+            .Where(a => !string.IsNullOrEmpty(a.Qid))
+            .Select(a => a.Qid!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return authorQids.Count > 0
+            ? new PropertyConstraint("P50", authorQids)
+            : null;
+    }
+
+    private static async Task<IReadOnlyList<(string CorrelationKey, Stage2Result Result)>> ResolveGroupAsync(
+        IEnumerable<string> correlationKeys,
+        Func<Task<Stage2Result>> resolveAsync)
+    {
+        var result = await resolveAsync().ConfigureAwait(false);
+        return correlationKeys
+            .Select(key => (key, result))
+            .ToList();
     }
 }

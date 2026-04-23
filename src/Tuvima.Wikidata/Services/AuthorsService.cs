@@ -75,15 +75,14 @@ public sealed class AuthorsService
             };
         }
 
-        // Resolve names in parallel, gated by the global concurrency limiter so a multi-author
-        // input doesn't fan out beyond the configured MaxConcurrency. Task.WhenAll preserves
-        // input order in the result array, so the Authors list still reflects the order names
-        // appeared in the raw string.
+        // Resolve names in parallel. The shared request sender enforces the configured
+        // MaxConcurrency cap on outbound HTTP, while Task.WhenAll preserves input order
+        // in the result array so Authors still reflects the raw-string order.
         var resolveTasks = new Task<ResolvedAuthor>[names.Count];
         for (var i = 0; i < names.Count; i++)
         {
-            resolveTasks[i] = ResolveNameWithLimiterAsync(
-                names[i], request.DetectPseudonyms, lang, cancellationToken);
+            resolveTasks[i] = ResolveSingleNameAsync(
+                names[i], request.WorkQidHint, request.DetectPseudonyms, lang, cancellationToken);
         }
 
         var resolved = await Task.WhenAll(resolveTasks).ConfigureAwait(false);
@@ -103,29 +102,6 @@ public sealed class AuthorsService
     }
 
     /// <summary>
-    /// Wraps a single-name resolution in the shared concurrency limiter so multi-author
-    /// inputs don't exceed the reconciler's <see cref="WikidataReconcilerOptions.MaxConcurrency"/>
-    /// when fanning out via <see cref="Task.WhenAll(IEnumerable{Task})"/>.
-    /// </summary>
-    private async Task<ResolvedAuthor> ResolveNameWithLimiterAsync(
-        string name,
-        bool detectPseudonyms,
-        string language,
-        CancellationToken cancellationToken)
-    {
-        await _ctx.ConcurrencyLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return await ResolveSingleNameAsync(name, detectPseudonyms, language, cancellationToken)
-                .ConfigureAwait(false);
-        }
-        finally
-        {
-            _ctx.ConcurrencyLimiter.Release();
-        }
-    }
-
-    /// <summary>
     /// Resolves a single author name, applying the three pseudonym patterns when requested.
     /// Each name gets its own reconciliation + pseudonym enrichment pipeline so multi-author
     /// inputs can have a mix of direct matches, reverse-looked-up pen names, and collective
@@ -133,6 +109,7 @@ public sealed class AuthorsService
     /// </summary>
     private async Task<ResolvedAuthor> ResolveSingleNameAsync(
         string name,
+        string? workQidHint,
         bool detectPseudonyms,
         string language,
         CancellationToken cancellationToken)
@@ -145,6 +122,9 @@ public sealed class AuthorsService
         var matches = await _reconcile.ReconcileAsync(new ReconciliationRequest
         {
             Query = name,
+            Properties = !string.IsNullOrWhiteSpace(workQidHint)
+                ? [new PropertyConstraint("P800", workQidHint)]
+                : null,
             Language = language,
             Limit = 3
         }, cancellationToken).ConfigureAwait(false);
@@ -323,6 +303,10 @@ public sealed class AuthorsService
         {
             hits = await _ctx.SearchClient.SearchAllByStatementAsync(query, null, cancellationToken)
                 .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {

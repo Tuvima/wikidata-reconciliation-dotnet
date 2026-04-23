@@ -203,14 +203,32 @@ public class EntityGraphTests
         var tree = graph.GetFamilyTree("Q1",
             generations: 1,
             parentRelationships: new HashSet<string> { "father" }, // mother excluded
-            childRelationships: new HashSet<string> { "child" });
+            childRelationships: new HashSet<string>());
 
         Assert.True(tree.ContainsKey(-1));
         var parents = tree[-1];
         Assert.Contains("Q2", parents);
-        // Q3 (Jessica) may or may not appear depending on edge direction;
-        // she's only reachable via "mother" which we excluded from parent rels,
-        // but may appear via incoming "child" edge from Q3->Q1
+        Assert.DoesNotContain("Q3", parents);
+    }
+
+    [Fact]
+    public void GetFamilyTree_DescendantsIncludeIncomingParentEdges()
+    {
+        var nodes = new[]
+        {
+            new GraphNode { Qid = "Q1", Label = "Child" },
+            new GraphNode { Qid = "Q2", Label = "Parent" }
+        };
+        var edges = new[]
+        {
+            new GraphEdge { SubjectQid = "Q1", Relationship = "father", ObjectQid = "Q2" }
+        };
+        var graph = new EntityGraph(nodes, edges);
+
+        var tree = graph.GetFamilyTree("Q2", generations: 1);
+
+        Assert.True(tree.ContainsKey(1));
+        Assert.Contains("Q1", tree[1]);
     }
 
     // FindCrossMediaEntities tests

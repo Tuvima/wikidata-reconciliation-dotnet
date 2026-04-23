@@ -69,7 +69,7 @@ public sealed class WikidataReconciler : IDisposable
         Authors = new AuthorsService(_context, Reconcile);
         Labels = new LabelsService(_context);
         Persons = new PersonsService(_context, Reconcile, Labels);
-        Stage2 = new Stage2Service(_context, Reconcile, Entities, Editions, Labels);
+        Stage2 = new Stage2Service(_context, Reconcile, Editions, Authors, Persons);
     }
 
     // ─── Back-compat delegates (v1 API surface) ─────────────────────

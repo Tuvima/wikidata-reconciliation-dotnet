@@ -278,19 +278,19 @@ public class IntegrationTests : IDisposable
     [Fact]
     public async Task GetPropertiesAsync_ShouldResolveEntityLabels()
     {
-        // Q190159 = Dune (novel), P50 = author → Q44413 (Frank Herbert)
-        var props = await _reconciler.GetPropertiesAsync(["Q190159"], ["P50"]);
+        // Q42 = Douglas Adams, P27 = country of citizenship -> Q145 (United Kingdom)
+        var props = await _reconciler.GetPropertiesAsync(["Q42"], ["P27"]);
 
-        Assert.True(props.ContainsKey("Q190159"));
-        var entityProps = props["Q190159"];
-        Assert.True(entityProps.ContainsKey("P50"));
-        var authorClaim = entityProps["P50"][0];
-        Assert.NotNull(authorClaim.Value);
-        Assert.Equal(WikidataValueKind.EntityId, authorClaim.Value.Kind);
-        Assert.Equal("Q44413", authorClaim.Value.EntityId);
-        Assert.NotNull(authorClaim.Value.EntityLabel);
-        Assert.NotEqual("Q44413", authorClaim.Value.EntityLabel);
-        Assert.Equal("Frank Herbert", authorClaim.Value.EntityLabel);
+        Assert.True(props.ContainsKey("Q42"));
+        var entityProps = props["Q42"];
+        Assert.True(entityProps.ContainsKey("P27"));
+        var citizenshipClaim = Assert.Single(entityProps["P27"]);
+        Assert.NotNull(citizenshipClaim.Value);
+        Assert.Equal(WikidataValueKind.EntityId, citizenshipClaim.Value.Kind);
+        Assert.Equal("Q145", citizenshipClaim.Value.EntityId);
+        Assert.NotNull(citizenshipClaim.Value.EntityLabel);
+        Assert.NotEqual("Q145", citizenshipClaim.Value.EntityLabel);
+        Assert.Equal("United Kingdom", citizenshipClaim.Value.EntityLabel);
     }
 
     [Fact]
@@ -317,15 +317,20 @@ public class IntegrationTests : IDisposable
     [Fact]
     public async Task GetPropertiesAsync_ShouldRespectLanguageParameter()
     {
-        // Q190159 = Dune (novel), P50 = author → Q44413 (Frank Herbert)
-        // German label for Frank Herbert should still be "Frank Herbert" (proper name)
-        // but this verifies the language parameter is passed through
-        var props = await _reconciler.GetPropertiesAsync(["Q190159"], ["P50"], language: "de");
+        // Q42 = Douglas Adams, P27 = country of citizenship -> Q145 (United Kingdom).
+        // The German label should differ from the English label, proving the language
+        // parameter is applied when resolving entity-valued properties.
+        var englishProps = await _reconciler.GetPropertiesAsync(["Q42"], ["P27"], language: "en");
+        var germanProps = await _reconciler.GetPropertiesAsync(["Q42"], ["P27"], language: "de");
 
-        Assert.True(props.ContainsKey("Q190159"));
-        var authorClaim = props["Q190159"]["P50"][0];
-        Assert.NotNull(authorClaim.Value?.EntityLabel);
-        Assert.DoesNotMatch(@"^Q\d+$", authorClaim.Value!.EntityLabel);
+        var englishLabel = Assert.Single(englishProps["Q42"]["P27"]).Value!.EntityLabel;
+        var germanLabel = Assert.Single(germanProps["Q42"]["P27"]).Value!.EntityLabel;
+
+        Assert.NotNull(englishLabel);
+        Assert.NotNull(germanLabel);
+        Assert.DoesNotMatch(@"^Q\d+$", englishLabel!);
+        Assert.DoesNotMatch(@"^Q\d+$", germanLabel!);
+        Assert.NotEqual(englishLabel, germanLabel);
     }
 
     // ─── Wikipedia URL Resolution ───────────────────────────────────

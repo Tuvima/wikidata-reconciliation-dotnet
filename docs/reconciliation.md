@@ -89,6 +89,8 @@ var results = await reconciler.ReconcileAsync(new ReconciliationRequest
 });
 ```
 
+As of v2.5.0, chained paths are scored end to end. The reconciler fetches the intermediate entities and evaluates the terminal property values instead of only inspecting the root property.
+
 ## Exclude Types
 
 Remove candidates of specific types:
@@ -103,7 +105,7 @@ var results = await reconciler.ReconcileAsync(new ReconciliationRequest
 
 ## Batch Reconciliation
 
-Reconcile multiple queries with automatic concurrency limiting (default: 5 concurrent requests):
+Reconcile multiple queries with automatic concurrency limiting. `MaxConcurrency` now caps actual outbound HTTP requests across the shared request sender, not just the number of top-level batch items:
 
 ```csharp
 var results = await reconciler.Reconcile.ReconcileBatchAsync([
@@ -163,6 +165,8 @@ var results = await reconciler.ReconcileAsync(new ReconciliationRequest
     Languages = ["ja", "en"],
 });
 ```
+
+As of v2.5.0, the full-text search path runs once per query and only the autocomplete path fans out per language.
 
 ## Diacritic-Insensitive Search
 
@@ -245,6 +249,8 @@ var text = Stage2Request.Text("tv-12", "Breaking Bad", ["Q5398426"]);
 var results = await reconciler.Stage2.ResolveBatchAsync([bridge, text]);
 ```
 
+As of v2.5.0, `MusicStage2Request.Artist` is resolved through `PersonsService` and `TextStage2Request.Author` is resolved through `AuthorsService`, so Stage 2 applies real QID constraints when the name resolution is confident.
+
 See the changelog and `docs/migrating-to-v2.md` for the full Stage 2 design.
 
 ## Direct QID Lookup
@@ -267,12 +273,15 @@ var result = await reconciler.Persons.SearchAsync(new PersonSearchRequest
 {
     Name = "Stephen King",
     Role = PersonRole.Author,
+    TitleHint = "The Shining",
     BirthYearHint = 1947
 });
 
 if (result.Found)
     Console.WriteLine($"{result.CanonicalName} ({result.Qid})");
 ```
+
+If `CompanionNameHints` is empty, `TitleHint` now feeds the same notable-work re-ranking path.
 
 ## Result Object
 

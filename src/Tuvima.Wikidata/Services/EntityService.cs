@@ -320,8 +320,8 @@ public sealed class EntityService
             var url = $"{_ctx.Options.ApiEndpoint}?action=query&prop=revisions" +
                       $"&titles={Uri.EscapeDataString(titles)}&rvprop=ids|timestamp&format=json";
 
-            var resilientClient = new ResilientHttpClient(_ctx.HttpClient, _ctx.Options.MaxRetries, _ctx.Options.MaxLag);
-            var json = await resilientClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            var json = await _ctx.ResilientClient.GetStringAsync(url, cancellationToken)
+                .ConfigureAwait(false);
             var response = System.Text.Json.JsonSerializer.Deserialize(json,
                 WikidataJsonContext.Default.RevisionQueryResponse);
 
@@ -357,36 +357,52 @@ public sealed class EntityService
         IReadOnlyList<string> qids, DateTimeOffset? since = null,
         CancellationToken cancellationToken = default)
     {
+        if (qids.Count == 0)
+            return [];
+
         var sinceTime = since ?? DateTimeOffset.UtcNow.AddHours(-24);
         var titles = string.Join('|', qids);
         var rcStart = sinceTime.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ");
 
-        var url = $"{_ctx.Options.ApiEndpoint}?action=query&list=recentchanges" +
-                  $"&rctitle={Uri.EscapeDataString(titles)}" +
-                  $"&rcstart={rcStart}&rcdir=newer&rclimit=500" +
-                  "&rcprop=title|timestamp|user|comment|ids&rctype=edit|new&format=json";
-
-        var resilientClient = new ResilientHttpClient(_ctx.HttpClient, _ctx.Options.MaxRetries, _ctx.Options.MaxLag);
-        var json = await resilientClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
-        var response = System.Text.Json.JsonSerializer.Deserialize(json,
-            WikidataJsonContext.Default.RecentChangesResponse);
-
-        if (response?.Query?.RecentChanges is null)
-            return [];
-
         var qidSet = new HashSet<string>(qids, StringComparer.OrdinalIgnoreCase);
+        var changes = new List<EntityChange>();
+        string? rcContinue = null;
 
-        return response.Query.RecentChanges
-            .Where(rc => qidSet.Contains(rc.Title))
-            .Select(rc => new EntityChange
+        do
+        {
+            var url = $"{_ctx.Options.ApiEndpoint}?action=query&list=recentchanges" +
+                      $"&rctitle={Uri.EscapeDataString(titles)}" +
+                      $"&rcstart={rcStart}&rcdir=newer&rclimit=500" +
+                      "&rcprop=title|timestamp|user|comment|ids&rctype=edit|new&format=json";
+
+            if (!string.IsNullOrEmpty(rcContinue))
+                url += $"&rccontinue={Uri.EscapeDataString(rcContinue)}";
+
+            var json = await _ctx.ResilientClient.GetStringAsync(url, cancellationToken)
+                .ConfigureAwait(false);
+            var response = System.Text.Json.JsonSerializer.Deserialize(json,
+                WikidataJsonContext.Default.RecentChangesResponse);
+
+            if (response?.Query?.RecentChanges is { Count: > 0 } recentChanges)
             {
-                EntityId = rc.Title,
-                ChangeType = rc.Type,
-                Timestamp = DateTimeOffset.TryParse(rc.Timestamp, out var ts) ? ts : DateTimeOffset.MinValue,
-                User = rc.User,
-                Comment = rc.Comment,
-                RevisionId = rc.RevId
-            })
+                changes.AddRange(recentChanges
+                    .Where(rc => qidSet.Contains(rc.Title))
+                    .Select(rc => new EntityChange
+                    {
+                        EntityId = rc.Title,
+                        ChangeType = rc.Type,
+                        Timestamp = DateTimeOffset.TryParse(rc.Timestamp, out var ts) ? ts : DateTimeOffset.MinValue,
+                        User = rc.User,
+                        Comment = rc.Comment,
+                        RevisionId = rc.RevId
+                    }));
+            }
+
+            rcContinue = response?.Continue?.RcContinueToken;
+        }
+        while (!string.IsNullOrEmpty(rcContinue));
+
+        return changes
             .OrderByDescending(c => c.Timestamp)
             .ToList();
     }

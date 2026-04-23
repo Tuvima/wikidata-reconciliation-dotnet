@@ -26,8 +26,8 @@ var reconciler = new WikidataReconciler(new WikidataReconcilerOptions
     AutoMatchScoreGap = 10,      // minimum gap over second-best candidate
 
     // Resilience
-    MaxConcurrency = 5,          // max parallel API requests during batch ops
-    MaxRetries = 3,              // retry attempts on HTTP 429
+    MaxConcurrency = 5,          // max concurrent outbound HTTP requests across all services
+    MaxRetries = 3,              // retry attempts for transient 408/429/5xx failures
 
     // Type hierarchy (P279 subclass walking)
     TypeHierarchyDepth = 0,      // 0 = direct P31 match only (fast)
@@ -48,6 +48,8 @@ using var reconciler = new WikidataReconciler(httpClient, options);
 ```
 
 When you pass your own `HttpClient`, the reconciler will not dispose it. When the reconciler creates its own, it owns and disposes the client.
+
+`MaxConcurrency` is enforced in the shared request sender, so it limits real outbound traffic from reconciliation, Wikipedia, Stage 2, and ASP.NET batch paths alike. `MaxRetries` applies to transient throttling/server failures, and `Retry-After` is honored when Wikimedia sends it.
 
 ## Caching
 
