@@ -54,7 +54,9 @@ public class ResilienceAndStage2Tests
                         sitelinks: TestPayloads.Sitelinks(("enwiki", "Article"))))));
             }
 
-            if (uri.Contains("/api/rest_v1/page/summary/Article", StringComparison.OrdinalIgnoreCase))
+            if (uri.Contains("action=query", StringComparison.OrdinalIgnoreCase) &&
+                uri.Contains("prop=extracts|pageimages|info|description", StringComparison.OrdinalIgnoreCase) &&
+                uri.Contains("titles=Article", StringComparison.OrdinalIgnoreCase))
             {
                 cts.Cancel();
                 throw new OperationCanceledException(cts.Token);

@@ -75,9 +75,8 @@ public sealed class AuthorsService
             };
         }
 
-        // Resolve names in parallel. The shared request sender enforces the configured
-        // MaxConcurrency cap on outbound HTTP, while Task.WhenAll preserves input order
-        // in the result array so Authors still reflects the raw-string order.
+        // Resolve names in parallel. The shared request sender enforces provider-safe
+        // host limits, while Task.WhenAll preserves input order in the result array.
         var resolveTasks = new Task<ResolvedAuthor>[names.Count];
         for (var i = 0; i < names.Count; i++)
         {

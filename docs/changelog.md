@@ -1,5 +1,29 @@
 # Changelog
 
+## v2.6.0
+
+Provider-safety release for high-volume ingestion.
+
+### Shared HTTP pipeline
+
+- **One internal provider path.** Wikidata, Wikipedia, and Commons-capable calls now flow through the same `ResilientHttpClient` pipeline owned by `ReconcilerContext`.
+- **Per-host throttling.** `www.wikidata.org`, `*.wikipedia.org`, and `commons.wikimedia.org` each get independent limiters. Wikidata defaults to one in-flight request and low request pacing; limits are configurable through `WikidataReconcilerOptions`.
+- **Correct 429 handling.** `Retry-After` is honored when present. Without it, retries use exponential backoff with jitter and stop at `MaxRetries`.
+- **In-flight request coalescing.** Identical requests share the same active network call, reducing repeated bursts for the same QIDs, properties, sitelinks, and summaries.
+- **Response cache hook.** Added `IWikidataResponseCache`, `WikidataResponseCacheKey`, and default `InMemoryWikidataResponseCache`. Successful cacheable entity, label/description, sitelink, Wikipedia summary, and Commons-capable responses can now be reused or stored by a consumer-provided cache.
+
+### Batching, telemetry, and failures
+
+- **Batched Wikipedia summaries.** `GetWikipediaSummariesAsync` now batches article titles through the MediaWiki API and preserves the result mapping back to each QID.
+- **Provider-safe batch sizing.** `ProviderRateLimitOptions.MaxBatchSize` controls chunking for Wikidata entity batches and Wikipedia summary batches, capped at Wikimedia's public API limit.
+- **Diagnostics.** Added `WikidataReconciler.Diagnostics` with request counts by host/endpoint, cache hits/misses, throttled waits, 429 count, retry count, coalesced request count, batch-size metrics, average latency, and recent typed failures.
+- **Typed provider failures.** Exhausted provider failures now throw `WikidataProviderException` with `WikidataFailureKind` (`NotFound`, `NoSitelink`, `RateLimited`, `TransientNetworkFailure`, `MalformedResponse`, `Cancelled`) instead of leaking raw HTTP exception details.
+
+### Tests and docs
+
+- **Validation expanded to 113 unit tests and 80 live integration tests.** Added tests for `Retry-After`, exponential backoff, coalescing, cache hit/miss behavior, batch chunking, cancellation, 404/429 handling, and malformed JSON.
+- **Documentation updated** across `README.md`, `AGENTS.md`, architecture, configuration, ASP.NET Core, and entity/Wikipedia guides for the new pipeline, options, diagnostics, cache hook, and typed failure behavior.
+
 ## v2.5.0
 
 Minor release. Aligns the documented contract with the actual runtime behavior, improves reliability under real Wikimedia traffic, and removes a few no-op public hints.

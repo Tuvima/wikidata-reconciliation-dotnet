@@ -8,9 +8,9 @@ Two NuGet packages:
 - `Tuvima.Wikidata` — core library, zero external dependencies
 - `Tuvima.Wikidata.AspNetCore` — W3C Reconciliation API middleware for ASP.NET Core
 
-## Architecture (v2.5.0)
+## Architecture (v2.6.0)
 
-`WikidataReconciler` is a thin **facade** that owns a shared `ReconcilerContext` (HttpClient, options, search/fetcher/scorer/type-checker collaborators, shared resilient request sender, global concurrency limiter) and exposes nine focused **sub-services** as properties:
+`WikidataReconciler` is a thin **facade** that owns a shared `ReconcilerContext` (HttpClient, options, search/fetcher/scorer/type-checker collaborators, shared provider-safe HTTP pipeline, response cache hook, diagnostics, and per-host limiters) and exposes nine focused **sub-services** as properties:
 
 ```
 WikidataReconciler (facade, owns ReconcilerContext)
@@ -27,11 +27,14 @@ WikidataReconciler (facade, owns ReconcilerContext)
 Shared internals (Tuvima.Wikidata.Internal):
 ├── ReconcilerContext           <- shared state for all sub-services
 ├── WikidataSearchClient        <- dual search: wbsearchentities + full-text
-├── WikidataEntityFetcher       <- wbgetentities in batches of 50, rank-aware
+├── WikidataEntityFetcher       <- wbgetentities in provider-safe chunks up to 50, rank-aware
 ├── ReconciliationScorer        <- weighted label + property scoring
 ├── TypeChecker                 <- P31 matching + optional P279 subclass walking
 │   └── SubclassResolver        <- BFS P279 walker with in-memory cache
-├── ResilientHttpClient         <- shared request sender: maxlag, retries, Retry-After, real HTTP concurrency cap
+├── ResilientHttpClient         <- shared HTTP pipeline: host throttles, retries, Retry-After, cache, coalescing
+├── HostRateLimiterRegistry     <- one limiter instance per provider host
+├── ProviderRequest             <- canonical request/cache keys and cacheability policy
+├── ProviderJson                <- malformed JSON -> typed provider failures
 ├── EntityMapper                <- internal JSON DTO -> public model mapping
 ├── FuzzyMatcher                <- token-sort-ratio (Levenshtein-based)
 ├── PropertyMatcher             <- type-specific matching (items, dates, quantities, coords, URLs)
@@ -62,7 +65,15 @@ src/
 ├── Tuvima.Wikidata/                         # Core library
 │   ├── WikidataReconciler.cs                # Facade — owns ReconcilerContext, exposes 9 sub-services
 │   ├── Direction.cs                         # Enum: Outgoing, Incoming (shared with Graph module)
-│   ├── WikidataReconcilerOptions.cs         # 14 configuration options
+│   ├── WikidataReconcilerOptions.cs         # Configuration: scoring, language, host rate limits, retry/cache/diagnostics
+│   ├── ProviderRateLimitOptions.cs          # Per-host MaxConcurrentRequests, RequestsPerSecond, MaxBatchSize
+│   ├── IWikidataResponseCache.cs            # Pluggable raw-response cache hook + canonical cache key
+│   ├── InMemoryWikidataResponseCache.cs     # Default process-local response cache
+│   ├── WikidataDiagnostics.cs               # Request/cache/throttle/retry/batch/failure telemetry snapshots
+│   ├── WikidataFailureKind.cs               # Typed failure categories
+│   ├── WikidataProviderException.cs         # Typed provider exception for exhausted/rejected provider calls
+│   ├── WikidataFailure.cs                   # Recent typed failure record for diagnostics
+│   ├── WikidataHttpLogEntry.cs              # Request logging callback event shape
 │   ├── ReconciliationRequest.cs             # Query, Types, ExcludeTypes, Properties, Language/Languages, Limit, DiacriticInsensitive, Cleaners, TypeHierarchyDepth
 │   ├── ReconciliationResult.cs              # Id, Name, Description, Score, Match, Types, Breakdown
 │   ├── ScoreBreakdown.cs                    # LabelScore, PropertyScores, TypeMatched, UniqueIdMatch
@@ -120,11 +131,15 @@ src/
 │   └── Internal/
 │       ├── ReconcilerContext.cs             # Shared state holder for facade and all sub-services
 │       ├── WikidataSearchClient.cs          # Dual search + suggest + external ID lookup + type-filtered + multi-language
-│       ├── WikidataEntityFetcher.cs         # Entity fetching with rank hierarchy + sitelinks
+│       ├── WikidataEntityFetcher.cs         # Entity fetching with rank hierarchy + sitelinks + provider-safe chunking
 │       ├── ReconciliationScorer.cs          # Weighted scoring formula + unique ID shortcut
 │       ├── TypeChecker.cs                   # P31 type matching (sync + async with P279)
 │       ├── SubclassResolver.cs              # P279 hierarchy BFS with ConcurrentDictionary cache
-│       ├── ResilientHttpClient.cs           # Shared request sender: retries, Retry-After, maxlag, outbound concurrency cap
+│       ├── ResilientHttpClient.cs           # Shared pipeline: retries, Retry-After, maxlag, cache, coalescing, per-host throttles
+│       ├── HostRateLimiter.cs               # Per-host concurrency + request pacing primitive
+│       ├── HostRateLimiterRegistry.cs       # Host -> limiter registry (Wikidata, Wikipedia, Commons, default)
+│       ├── ProviderRequest.cs               # Canonical request/cache key and cacheability policy
+│       ├── ProviderJson.cs                  # Source-gen JSON deserialize wrapper with typed malformed-response failures
 │       ├── EntityMapper.cs                  # Internal DTO -> public model mapping
 │       ├── HtmlTextExtractor.cs             # Lightweight HTML-to-text for Wikipedia parse output
 │       ├── FuzzyMatcher.cs                  # Token-sort-ratio string matching + diacritic stripping
@@ -139,7 +154,7 @@ src/
 │           ├── ParseResponse.cs              # action=parse API response (sections, section content)
 │           ├── RevisionQueryResponse.cs      # Revision query API response (staleness detection)
 │           ├── RecentChangesResponse.cs      # Recent changes API response
-│           └── WikipediaSummaryResponse.cs   # Wikipedia REST API response
+│           └── WikipediaSummaryResponse.cs   # Wikipedia summary REST/batch API response
 ├── Tuvima.Wikidata.AspNetCore/              # ASP.NET Core companion
 │   ├── ReconciliationEndpoints.cs           # W3C API endpoints + suggest + preview + W3C models
 │   ├── ReconciliationServiceOptions.cs      # Service name, identifier space, default types
@@ -257,6 +272,14 @@ Key design notes:
 - `Stage2Result` does not leak claims — carries only identifiers + strategy metadata + label. Consumers needing full entity data follow up with `Entities.GetEntitiesAsync`.
 - Static factory `Stage2Request.Bridge(...)` / `.Music(...)` / `.Text(...)` for dynamic construction from heterogeneous source data.
 
+### `reconciler.Diagnostics` — `WikidataDiagnostics` (v2.6)
+
+| Method | Purpose |
+|---|---|
+| `GetSnapshot()` | Returns request counts by host/endpoint, cache hits/misses, throttled waits, 429 count, retry count, coalesced request count, batch-size metrics, average latency, and recent typed failures. |
+
+Typed provider failures use `WikidataFailureKind` (`NotFound`, `NoSitelink`, `RateLimited`, `TransientNetworkFailure`, `MalformedResponse`, `Cancelled`). Exhausted HTTP/provider failures throw `WikidataProviderException` with the same kind.
+
 ### EntityGraph Methods (Tuvima.Wikidata.Graph)
 
 | Method | Purpose |
@@ -282,9 +305,21 @@ Key design notes:
 | `PropertyWeight` | 0.4 | Weight per property match (label = 1.0) |
 | `AutoMatchThreshold` | 95 | Score threshold for auto-match |
 | `AutoMatchScoreGap` | 10 | Min gap over second-best for auto-match |
-| `MaxConcurrency` | 5 | Max concurrent outbound HTTP requests across all services |
+| `MaxConcurrency` | 5 | Legacy top-level batch concurrency setting retained for compatibility |
 | `MaxRetries` | 3 | Retry attempts for transient 408/429/5xx failures |
+| `RetryBaseDelay` | 1s | Base exponential-backoff delay when Retry-After is absent |
+| `MaxRetryDelay` | 30s | Cap for exponential backoff when Retry-After is absent |
+| `RetryJitterRatio` | 0.2 | Extra jitter applied to exponential backoff delays |
 | `MaxLag` | 5 | Wikimedia maxlag parameter (seconds) |
+| `WikidataRateLimit` | 1 concurrent / 1 RPS / 50 batch | Host policy for `www.wikidata.org` |
+| `WikipediaRateLimit` | 2 concurrent / 2 RPS / 50 batch | Host policy for each `*.wikipedia.org` host |
+| `CommonsRateLimit` | 1 concurrent / 1 RPS / 50 batch | Host policy for `commons.wikimedia.org` |
+| `DefaultRateLimit` | 1 concurrent / 1 RPS / 50 batch | Host policy for custom Wikibase or unknown hosts |
+| `EnableRequestCoalescing` | `true` | Share identical in-flight GET requests |
+| `EnableResponseCaching` | `true` | Cache successful cacheable raw provider responses |
+| `ResponseCache` | `InMemoryWikidataResponseCache` | Pluggable raw-response cache implementation |
+| `ResponseCacheTtl` | 12h | TTL for successful cacheable responses |
+| `RequestLogger` | `null` | Optional callback for request/cache/retry/failure log entries |
 | `TypeHierarchyDepth` | 0 | P279 subclass walk depth (0 = off) |
 | `IncludeSitelinkLabels` | `false` | Include Wikipedia sitelink titles in scoring label pool |
 | `UniqueIdProperties` | 13 IDs | Properties that trigger score=100 shortcut |
@@ -321,18 +356,19 @@ dotnet test
 dotnet pack --configuration Release
 ```
 
-Test counts: 103 unit tests + 80 integration tests = 183 total.
+Test counts: 113 unit tests + 80 integration tests = 193 total.
 
 ## Key Design Decisions
 
 - **Zero external dependencies** — only `System.Text.Json` (built into .NET). No FuzzySharp, no Polly, no caching libraries.
 - **AOT compatible** — `IsAotCompatible` and `IsTrimmable` set in .csproj. All JSON serialization uses source-generated `JsonSerializerContext` (no reflection).
-- **No built-in cache** — deliberate; avoids stale data issues (upstream issue #146). Users add caching via `HttpClient` `DelegatingHandler` pattern.
+- **Response cache hook** — the shared HTTP pipeline includes `IWikidataResponseCache` with an in-memory default; consumers can replace it with a durable cache.
 - **Dual search** — both `wbsearchentities` and full-text `action=query&list=search` contribute to recall. Multi-language search runs the full-text pass once per query and fans out only the autocomplete path per language.
 - **Claim rank hierarchy** — preferred rank values used if available, then normal, deprecated always excluded.
 - **Language fallback chain** — exact -> subtag parent -> "mul" -> "en". API requests include all fallback languages.
-- **Request-level concurrency limiting** — `SemaphoreSlim` gates actual outbound HTTP requests (default 5), not just top-level batch items.
-- **Retry behavior** — transient 408/429/5xx failures and transport errors are retried with backoff, and `Retry-After` is honored when present.
+- **Provider-safe throttling** — every public API on a reconciler shares the same per-host limiter instances; Wikidata defaults to single-flight low-RPS behavior.
+- **Retry behavior** — transient 408/429/5xx failures and transport errors are retried with capped exponential backoff and jitter, and `Retry-After` is honored when present.
+- **In-flight request coalescing** — identical active requests share one network call and one response.
 - **maxlag parameter** — appended to every Wikidata API request per Wikimedia bot etiquette.
 - **Chained property paths** — property constraints like `P131/P17` are resolved end to end during scoring by fetching the intermediate entities and evaluating the terminal claim values.
 - **Graph module: no RDF** — adjacency lists and BFS, not RDF/SPARQL. The operations (pathfinding, family trees, cross-media) don't require a graph database engine.
@@ -344,7 +380,7 @@ Test counts: 103 unit tests + 80 integration tests = 183 total.
 | `wbsearchentities` | Autocomplete search by label/alias |
 | `action=query&list=search` | Full-text search across entity content |
 | `wbgetentities` | Fetch entity data (labels, descriptions, aliases, claims, sitelinks) |
-| Wikipedia REST API `/page/summary/` | Article summaries with thumbnails |
+| Wikipedia `action=query&prop=extracts|pageimages|info|description` | Batched article summaries with thumbnails |
 | Wikipedia `action=parse` | Section TOC (tocdata) and section content (text) |
 | `action=query&prop=revisions` | Lightweight revision ID lookup for staleness detection |
 | `action=query&list=recentchanges` | Entity change monitoring |

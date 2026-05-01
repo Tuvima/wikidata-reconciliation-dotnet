@@ -322,8 +322,9 @@ public sealed class EntityService
 
             var json = await _ctx.ResilientClient.GetStringAsync(url, cancellationToken)
                 .ConfigureAwait(false);
-            var response = System.Text.Json.JsonSerializer.Deserialize(json,
-                WikidataJsonContext.Default.RevisionQueryResponse);
+            var response = ProviderJson.Deserialize(json,
+                WikidataJsonContext.Default.RevisionQueryResponse,
+                "query.revisions");
 
             if (response?.Query?.Pages is null)
                 continue;
@@ -380,8 +381,9 @@ public sealed class EntityService
 
             var json = await _ctx.ResilientClient.GetStringAsync(url, cancellationToken)
                 .ConfigureAwait(false);
-            var response = System.Text.Json.JsonSerializer.Deserialize(json,
-                WikidataJsonContext.Default.RecentChangesResponse);
+            var response = ProviderJson.Deserialize(json,
+                WikidataJsonContext.Default.RecentChangesResponse,
+                "query.recentchanges");
 
             if (response?.Query?.RecentChanges is { Count: > 0 } recentChanges)
             {

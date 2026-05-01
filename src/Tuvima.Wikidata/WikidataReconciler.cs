@@ -44,6 +44,9 @@ public sealed class WikidataReconciler : IDisposable
     /// <summary>Unified Stage 2 resolver for bridge IDs, music albums, and type-filtered text reconciliation.</summary>
     public Stage2Service Stage2 { get; }
 
+    /// <summary>Shared HTTP/cache/throttle telemetry for all sub-services owned by this reconciler.</summary>
+    public WikidataDiagnostics Diagnostics => _context.Diagnostics;
+
     public WikidataReconciler()
         : this(new WikidataReconcilerOptions()) { }
 
@@ -183,6 +186,7 @@ public sealed class WikidataReconciler : IDisposable
 
     public void Dispose()
     {
+        _context.ResilientClient.Dispose();
         _context.ConcurrencyLimiter.Dispose();
         if (_ownsHttpClient)
             _context.HttpClient.Dispose();

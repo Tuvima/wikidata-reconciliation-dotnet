@@ -8,6 +8,7 @@ internal sealed class ReconcilerContext
 {
     public HttpClient HttpClient { get; }
     public WikidataReconcilerOptions Options { get; }
+    public WikidataDiagnostics Diagnostics { get; }
     public ResilientHttpClient ResilientClient { get; }
     public WikidataSearchClient SearchClient { get; }
     public WikidataEntityFetcher EntityFetcher { get; }
@@ -20,11 +21,12 @@ internal sealed class ReconcilerContext
     {
         HttpClient = httpClient;
         Options = options;
+        Diagnostics = new WikidataDiagnostics();
         ConcurrencyLimiter = new SemaphoreSlim(Math.Max(1, options.MaxConcurrency));
 
-        ResilientClient = new ResilientHttpClient(httpClient, options.MaxRetries, options.MaxLag, ConcurrencyLimiter);
+        ResilientClient = new ResilientHttpClient(httpClient, options, Diagnostics);
         SearchClient = new WikidataSearchClient(ResilientClient, options);
-        EntityFetcher = new WikidataEntityFetcher(ResilientClient, options);
+        EntityFetcher = new WikidataEntityFetcher(ResilientClient, options, Diagnostics);
         Scorer = new ReconciliationScorer(options);
         TypeChecker = new TypeChecker(options.TypePropertyId);
         SubclassResolver = options.TypeHierarchyDepth > 0

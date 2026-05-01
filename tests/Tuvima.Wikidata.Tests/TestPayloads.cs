@@ -8,7 +8,12 @@ internal static class TestPayloads
     {
         return new WikidataReconciler(CreateHttpClient(handler), new WikidataReconcilerOptions
         {
-            UserAgent = "Tuvima.Wikidata.Tests/2.5 (https://github.com/Tuvima/wikidata)"
+            UserAgent = "Tuvima.Wikidata.Tests/2.6 (https://github.com/Tuvima/wikidata)",
+            EnableResponseCaching = false,
+            WikidataRateLimit = ProviderRateLimitOptions.Unthrottled,
+            WikipediaRateLimit = ProviderRateLimitOptions.Unthrottled,
+            CommonsRateLimit = ProviderRateLimitOptions.Unthrottled,
+            DefaultRateLimit = ProviderRateLimitOptions.Unthrottled
         });
     }
 
@@ -18,7 +23,7 @@ internal static class TestPayloads
         {
             Timeout = TimeSpan.FromSeconds(10)
         };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("Tuvima.Wikidata.Tests/2.5 (https://github.com/Tuvima/wikidata)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("Tuvima.Wikidata.Tests/2.6 (https://github.com/Tuvima/wikidata)");
         return client;
     }
 

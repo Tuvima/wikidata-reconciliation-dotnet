@@ -8,15 +8,20 @@ namespace Tuvima.Wikidata.Internal;
 /// </summary>
 internal sealed class WikidataEntityFetcher
 {
-    private const int MaxIdsPerRequest = 50;
+    private const int ProviderMaxIdsPerRequest = 50;
 
     private readonly ResilientHttpClient _httpClient;
     private readonly WikidataReconcilerOptions _options;
+    private readonly WikidataDiagnostics _diagnostics;
 
-    public WikidataEntityFetcher(ResilientHttpClient httpClient, WikidataReconcilerOptions options)
+    public WikidataEntityFetcher(
+        ResilientHttpClient httpClient,
+        WikidataReconcilerOptions options,
+        WikidataDiagnostics diagnostics)
     {
         _httpClient = httpClient;
         _options = options;
+        _diagnostics = diagnostics;
     }
 
     /// <summary>
@@ -69,10 +74,20 @@ internal sealed class WikidataEntityFetcher
         IReadOnlyList<string> ids, string? language, string props, CancellationToken cancellationToken)
     {
         var result = new Dictionary<string, WikidataEntity>(StringComparer.OrdinalIgnoreCase);
+        var distinctIds = ids
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var batchSize = Math.Clamp(
+            _options.WikidataRateLimit.MaxBatchSize,
+            1,
+            ProviderMaxIdsPerRequest);
 
-        for (var i = 0; i < ids.Count; i += MaxIdsPerRequest)
+        for (var i = 0; i < distinctIds.Count; i += batchSize)
         {
-            var batch = ids.Skip(i).Take(MaxIdsPerRequest).ToList();
+            var batch = distinctIds.Skip(i).Take(batchSize).ToList();
+            _diagnostics.RecordBatch("wbgetentities", batch.Count);
             var batchResult = await FetchBatchAsync(batch, language, props, cancellationToken).ConfigureAwait(false);
 
             foreach (var kvp in batchResult)
@@ -96,7 +111,7 @@ internal sealed class WikidataEntityFetcher
         }
 
         var json = await _httpClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
-        var response = JsonSerializer.Deserialize(json, WikidataJsonContext.Default.WbGetEntitiesResponse);
+        var response = ProviderJson.Deserialize(json, WikidataJsonContext.Default.WbGetEntitiesResponse, "wbgetentities");
 
         return response?.Entities ?? new Dictionary<string, WikidataEntity>();
     }

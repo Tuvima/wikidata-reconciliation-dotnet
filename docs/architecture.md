@@ -1,8 +1,8 @@
 # Architecture
 
-## Component Overview (v2.5.0+)
+## Component Overview (v2.6.0+)
 
-`WikidataReconciler` is a thin **facade** that owns a shared `ReconcilerContext` (HttpClient, options, collaborator instances, shared resilient request sender, global concurrency limiter) and exposes nine focused **sub-services** as properties. Each sub-service owns a slice of the API surface and can be injected independently in DI without going through the facade.
+`WikidataReconciler` is a thin **facade** that owns a shared `ReconcilerContext` (HttpClient, options, collaborator instances, shared provider-safe HTTP pipeline, diagnostics, cache hook, and host limiters) and exposes nine focused **sub-services** as properties. Each sub-service owns a slice of the API surface and can be injected independently in DI without going through the facade.
 
 ```
 WikidataReconciler (facade, owns ReconcilerContext)
@@ -19,11 +19,14 @@ WikidataReconciler (facade, owns ReconcilerContext)
 Shared internals (Tuvima.Wikidata.Internal):
 ├── ReconcilerContext           <- shared state holder for facade and all sub-services
 ├── WikidataSearchClient        <- dual search: wbsearchentities + full-text
-├── WikidataEntityFetcher       <- wbgetentities in batches of 50, rank-aware
+├── WikidataEntityFetcher       <- wbgetentities in provider-safe chunks up to 50, rank-aware
 ├── ReconciliationScorer        <- weighted label + property scoring
 ├── TypeChecker                 <- P31 matching + optional P279 subclass walking
 │   └── SubclassResolver        <- BFS P279 walker with in-memory cache
-├── ResilientHttpClient         <- shared request sender: maxlag, retries, Retry-After, real HTTP concurrency cap
+├── ResilientHttpClient         <- shared HTTP pipeline: host throttles, retries, Retry-After, cache, coalescing
+├── HostRateLimiterRegistry     <- one limiter instance per provider host
+├── ProviderRequest             <- canonical request/cache keys and cacheability policy
+├── ProviderJson                <- malformed JSON -> typed provider failures
 ├── EntityMapper                <- internal JSON DTO -> public model mapping
 ├── FuzzyMatcher                <- token-sort-ratio (Levenshtein-based)
 ├── PropertyMatcher             <- type-specific matching (items, dates, quantities, coords, URLs)
@@ -78,19 +81,33 @@ For multi-value constraints, the property score is the average of the best match
 
 Candidates are checked against the requested type (P31 direct match) and excluded types. With `TypeHierarchyDepth > 0`, the library walks the P279 (subclass of) hierarchy — for example, a "novel" (Q8261) matches a query for "literary work" (Q7725634) because novel is a subclass of literary work. The subclass hierarchy is cached in memory within the reconciler's lifetime.
 
+## Shared HTTP Pipeline
+
+All Wikidata, Wikipedia, and Commons-capable calls go through one `ResilientHttpClient` instance per `WikidataReconciler`. The pipeline:
+
+- uses independent host limiters for `www.wikidata.org`, each `*.wikipedia.org` host, and `commons.wikimedia.org`
+- defaults Wikidata to a conservative single-flight / low-RPS policy
+- appends `maxlag` to Wikidata API calls
+- honors `Retry-After` on 429/503-style responses, otherwise using exponential backoff with jitter
+- coalesces identical in-flight requests by canonical endpoint/query key
+- caches successful cacheable raw responses through `IWikidataResponseCache`
+- records request counts, cache hits/misses, throttled waits, 429s, retries, batch sizes, average latency, and typed failures in `WikidataDiagnostics`
+
+Wikipedia summaries use batched MediaWiki `action=query&prop=extracts|pageimages|info|description` requests instead of one REST summary call per article. Sitelink lookup still uses batched `wbgetentities`, and each summary result is mapped back to the originating QID.
+
 ## Design Decisions
 
 - **Zero external dependencies** — only `System.Text.Json` (built into .NET). No FuzzySharp, no Polly, no caching libraries.
 - **AOT compatible** — `IsAotCompatible` and `IsTrimmable` set in .csproj. All JSON serialization uses source-generated `JsonSerializerContext` (no reflection).
-- **No built-in cache** — deliberate; avoids stale data issues. Users add caching via `HttpClient` `DelegatingHandler` pattern.
+- **Response cache hook** — the shared pipeline has a small `IWikidataResponseCache` abstraction with a process-local in-memory default. Consumers that need durable provider caching can replace it without changing service code.
 - **Dual search** — both `wbsearchentities` and full-text search contribute to recall, but multi-language queries run the full-text pass only once and fan out only the autocomplete pass per language.
 - **Claim rank hierarchy** — preferred rank values used if available, then normal, deprecated always excluded.
 - **Language fallback chain** — exact -> subtag parent -> "mul" -> "en". API requests include all fallback languages.
-- **Request-level concurrency limiting** — `SemaphoreSlim` gates actual outbound HTTP requests (default 5), not just top-level batch items, so every service path shares the same cap.
-- **Retry behavior** — transient `408`/`429`/`5xx` failures and transport errors are retried with backoff, and `Retry-After` is honored when the remote API asks the client to wait.
+- **Provider-safe throttling** — every service path shares the same per-host limiter instances; Wikidata defaults to single-flight low-RPS behavior.
+- **Retry behavior** — transient `408`/`429`/`5xx` failures and transport errors are retried with capped backoff and jitter, and `Retry-After` is honored when the remote API asks the client to wait.
 - **maxlag parameter** — appended to every Wikidata API request per Wikimedia bot etiquette.
 - **Graph module: no RDF** — the graph module uses adjacency lists and BFS, not RDF/SPARQL. The operations (pathfinding, family trees, cross-media detection) don't require a full graph database.
-- **Facade + sub-services (v2.0)** — the root `WikidataReconciler` is a thin facade over nine focused sub-services. The shared `ReconcilerContext` ensures all services use the same HttpClient, options, resilient request sender, and global concurrency limiter. Sub-services are constructed once at facade init and exposed as properties; they are also registered individually by `AddWikidataReconciliation()` so DI consumers can inject a narrow slice.
+- **Facade + sub-services (v2.0)** — the root `WikidataReconciler` is a thin facade over nine focused sub-services. The shared `ReconcilerContext` ensures all services use the same HttpClient, options, HTTP pipeline, diagnostics, cache hook, and host limiters. Sub-services are constructed once at facade init and exposed as properties; they are also registered individually by `AddWikidataReconciliation()` so DI consumers can inject a narrow slice.
 - **Discriminated Stage 2 requests (v2.2)** — the Stage 2 resolver uses a marker interface `IStage2Request` with three sealed concrete implementations (`BridgeStage2Request`, `MusicStage2Request`, `TextStage2Request`) instead of a single struct with mutually-exclusive fields. The strategy is the type; illegal combinations are unrepresentable; `TextStage2Request.CirrusSearchTypes` is `required` and validated non-empty at resolve time.
 
 ## Wikidata API Endpoints Used
@@ -100,7 +117,7 @@ Candidates are checked against the requested type (P31 direct match) and exclude
 | `wbsearchentities` | Autocomplete search by label/alias |
 | `action=query&list=search` | Full-text search across entity content |
 | `wbgetentities` | Fetch entity data (labels, descriptions, aliases, claims, sitelinks) |
-| Wikipedia REST API `/page/summary/` | Article summaries with thumbnails |
+| Wikipedia `action=query&prop=extracts|pageimages|info|description` | Batched article summaries with thumbnails |
 | Wikipedia `action=parse` | Section TOC (tocdata) and section content (text) |
 | `action=query&prop=revisions` | Lightweight revision ID lookup for staleness detection |
 | `action=query&list=recentchanges` | Entity change monitoring |

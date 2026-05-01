@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using Tuvima.Wikidata.Internal.Json;
 
@@ -161,7 +160,7 @@ internal sealed class WikidataSearchClient
                   $"&language={Uri.EscapeDataString(language)}&limit={limit}&format=json";
 
         var json = await _httpClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
-        var response = JsonSerializer.Deserialize(json, WikidataJsonContext.Default.WbSearchEntitiesResponse);
+        var response = ProviderJson.Deserialize(json, WikidataJsonContext.Default.WbSearchEntitiesResponse, "wbsearchentities");
 
         return response?.Search ?? [];
     }
@@ -176,7 +175,7 @@ internal sealed class WikidataSearchClient
                   $"&language={Uri.EscapeDataString(language)}&type=property&limit={limit}&format=json";
 
         var json = await _httpClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
-        var response = JsonSerializer.Deserialize(json, WikidataJsonContext.Default.WbSearchEntitiesResponse);
+        var response = ProviderJson.Deserialize(json, WikidataJsonContext.Default.WbSearchEntitiesResponse, "wbsearchentities");
 
         return response?.Search ?? [];
     }
@@ -197,7 +196,7 @@ internal sealed class WikidataSearchClient
                   $"&srlimit={limit}&srsearch={Uri.EscapeDataString(searchQuery)}&format=json";
 
         var json = await _httpClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
-        var response = JsonSerializer.Deserialize(json, WikidataJsonContext.Default.QuerySearchResponse);
+        var response = ProviderJson.Deserialize(json, WikidataJsonContext.Default.QuerySearchResponse, "query.search");
 
         return response?.Query?.Search?.Select(r => r.Title).ToList() ?? [];
     }
@@ -227,7 +226,7 @@ internal sealed class WikidataSearchClient
                 url += $"&sroffset={sroffset}";
 
             var json = await _httpClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
-            var response = JsonSerializer.Deserialize(json, WikidataJsonContext.Default.QuerySearchResponse);
+            var response = ProviderJson.Deserialize(json, WikidataJsonContext.Default.QuerySearchResponse, "query.search");
 
             if (response?.Query?.Search is { Count: > 0 } results)
             {
@@ -257,7 +256,7 @@ internal sealed class WikidataSearchClient
                   $"&srlimit={limit}&srsearch={Uri.EscapeDataString(query)}&format=json";
 
         var json = await _httpClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
-        var response = JsonSerializer.Deserialize(json, WikidataJsonContext.Default.QuerySearchResponse);
+        var response = ProviderJson.Deserialize(json, WikidataJsonContext.Default.QuerySearchResponse, "query.search");
 
         return response?.Query?.Search?.Select(r => r.Title).ToList() ?? [];
     }
@@ -268,7 +267,7 @@ internal sealed class WikidataSearchClient
                   $"&language={Uri.EscapeDataString(language)}&limit={limit}&format=json";
 
         var json = await _httpClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
-        var response = JsonSerializer.Deserialize(json, WikidataJsonContext.Default.WbSearchEntitiesResponse);
+        var response = ProviderJson.Deserialize(json, WikidataJsonContext.Default.WbSearchEntitiesResponse, "wbsearchentities");
 
         return response?.Search?.Select(r => r.Id).ToList() ?? [];
     }
@@ -279,7 +278,7 @@ internal sealed class WikidataSearchClient
                   $"&srlimit={limit}&srsearch={Uri.EscapeDataString(query)}&srwhat=text&format=json";
 
         var json = await _httpClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
-        var response = JsonSerializer.Deserialize(json, WikidataJsonContext.Default.QuerySearchResponse);
+        var response = ProviderJson.Deserialize(json, WikidataJsonContext.Default.QuerySearchResponse, "query.search");
 
         return response?.Query?.Search?.Select(r => r.Title).ToList() ?? [];
     }

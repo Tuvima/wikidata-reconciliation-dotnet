@@ -52,17 +52,36 @@ public sealed class WikidataReconcilerOptions
     public double AutoMatchScoreGap { get; init; } = 10;
 
     /// <summary>
-    /// Maximum number of concurrent API requests during batch reconciliation.
-    /// Limits parallelism to avoid hitting Wikimedia rate limits.
-    /// Default is 5. Set to 1 for fully sequential processing.
+    /// Legacy top-level batch concurrency setting retained for compatibility.
+    /// Provider HTTP concurrency is controlled by the per-host rate-limit options.
     /// </summary>
     public int MaxConcurrency { get; init; } = 5;
 
     /// <summary>
-    /// Number of retry attempts when the API returns HTTP 429 (Too Many Requests).
-    /// Uses exponential backoff (1s, 2s, 4s, ...). Default is 3.
+    /// Number of retry attempts for transient HTTP/provider failures.
+    /// Retry-After is honored when present; otherwise exponential backoff with jitter is used.
+    /// Default is 3.
     /// </summary>
     public int MaxRetries { get; init; } = 3;
+
+    /// <summary>
+    /// Base delay for exponential retry backoff when Retry-After is absent.
+    /// Default is 1 second.
+    /// </summary>
+    public TimeSpan RetryBaseDelay { get; init; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// Maximum delay for exponential retry backoff when Retry-After is absent.
+    /// Retry-After values from the provider are honored as-is.
+    /// Default is 30 seconds.
+    /// </summary>
+    public TimeSpan MaxRetryDelay { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Jitter ratio applied to exponential backoff delays when Retry-After is absent.
+    /// Default is 0.2 (up to 20% extra delay).
+    /// </summary>
+    public double RetryJitterRatio { get; init; } = 0.2;
 
     /// <summary>
     /// The maxlag parameter sent with every API request (Wikimedia bot etiquette).
@@ -71,6 +90,74 @@ public sealed class WikidataReconcilerOptions
     /// Set to 0 to disable. See https://www.mediawiki.org/wiki/Manual:Maxlag_parameter
     /// </summary>
     public int MaxLag { get; init; } = 5;
+
+    /// <summary>
+    /// Host policy for www.wikidata.org. Default is conservative: one in-flight request
+    /// and one request start per second.
+    /// </summary>
+    public ProviderRateLimitOptions WikidataRateLimit { get; init; } = new()
+    {
+        MaxConcurrentRequests = 1,
+        RequestsPerSecond = 1,
+        MaxBatchSize = 50
+    };
+
+    /// <summary>
+    /// Host policy for wikipedia.org API hosts. Each language host gets its own limiter.
+    /// </summary>
+    public ProviderRateLimitOptions WikipediaRateLimit { get; init; } = new()
+    {
+        MaxConcurrentRequests = 2,
+        RequestsPerSecond = 2,
+        MaxBatchSize = 50
+    };
+
+    /// <summary>
+    /// Host policy for commons.wikimedia.org.
+    /// </summary>
+    public ProviderRateLimitOptions CommonsRateLimit { get; init; } = new()
+    {
+        MaxConcurrentRequests = 1,
+        RequestsPerSecond = 1,
+        MaxBatchSize = 50
+    };
+
+    /// <summary>
+    /// Host policy used for other configured Wikibase or Wikimedia hosts.
+    /// </summary>
+    public ProviderRateLimitOptions DefaultRateLimit { get; init; } = new()
+    {
+        MaxConcurrentRequests = 1,
+        RequestsPerSecond = 1,
+        MaxBatchSize = 50
+    };
+
+    /// <summary>
+    /// Enables coalescing of identical in-flight GET requests. Default is true.
+    /// </summary>
+    public bool EnableRequestCoalescing { get; init; } = true;
+
+    /// <summary>
+    /// Enables raw response caching for cacheable entity, sitelink, summary, and Commons responses.
+    /// Default is true.
+    /// </summary>
+    public bool EnableResponseCaching { get; init; } = true;
+
+    /// <summary>
+    /// Cache used by the shared HTTP pipeline. Defaults to a process-local in-memory cache.
+    /// Applications can replace this with a durable provider cache.
+    /// </summary>
+    public IWikidataResponseCache? ResponseCache { get; init; } = new InMemoryWikidataResponseCache();
+
+    /// <summary>
+    /// Time-to-live for successful cacheable provider responses. Default is 12 hours.
+    /// </summary>
+    public TimeSpan ResponseCacheTtl { get; init; } = TimeSpan.FromHours(12);
+
+    /// <summary>
+    /// Optional callback invoked for provider requests, retries, cache hits, and failures.
+    /// </summary>
+    public Action<WikidataHttpLogEntry>? RequestLogger { get; init; }
 
     /// <summary>
     /// Maximum depth for P279 (subclass of) hierarchy walking during type checking.

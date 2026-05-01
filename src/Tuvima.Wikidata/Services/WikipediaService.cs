@@ -32,6 +32,14 @@ public sealed class WikipediaService
             {
                 result[id] = $"https://{language}.wikipedia.org/wiki/{Uri.EscapeDataString(sitelink.Title)}";
             }
+            else
+            {
+                _ctx.Diagnostics.RecordFailure(
+                    WikidataFailureKind.NoSitelink,
+                    "wikipedia.sitelink",
+                    $"No {language} Wikipedia sitelink exists for {id}.",
+                    id);
+            }
         }
 
         return result;
@@ -47,7 +55,7 @@ public sealed class WikipediaService
             .ConfigureAwait(false);
 
         var siteKey = $"{language}wiki";
-        var titleToQid = new Dictionary<string, string>();
+        var titleToQid = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var (id, entity) in entities)
         {
@@ -56,48 +64,21 @@ public sealed class WikipediaService
             {
                 titleToQid[sitelink.Title] = id;
             }
+            else
+            {
+                _ctx.Diagnostics.RecordFailure(
+                    WikidataFailureKind.NoSitelink,
+                    "wikipedia.summary",
+                    $"No {language} Wikipedia sitelink exists for {id}.",
+                    id);
+            }
         }
 
         if (titleToQid.Count == 0)
             return [];
 
-        var tasks = titleToQid.Select(async kvp =>
-        {
-            try
-            {
-                var url = $"https://{language}.wikipedia.org/api/rest_v1/page/summary/{Uri.EscapeDataString(kvp.Key)}";
-                var json = await _ctx.ResilientClient.GetStringAsync(
-                    url, cancellationToken, applyMaxLag: false).ConfigureAwait(false);
-                var response = System.Text.Json.JsonSerializer.Deserialize(json,
-                    WikidataJsonContext.Default.WikipediaSummaryResponse);
-
-                if (response is not null && !string.IsNullOrEmpty(response.Extract))
-                {
-                    return new WikipediaSummary
-                    {
-                        EntityId = kvp.Value,
-                        Title = response.Title,
-                        Extract = response.Extract,
-                        Description = response.Description,
-                        ThumbnailUrl = response.Thumbnail?.Source,
-                        ArticleUrl = response.ContentUrls?.Desktop?.Page
-                            ?? $"https://{language}.wikipedia.org/wiki/{Uri.EscapeDataString(kvp.Key)}"
-                    };
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch
-            {
-                // Skip on failure
-            }
-            return null;
-        });
-
-        var fetched = await Task.WhenAll(tasks).ConfigureAwait(false);
-        return fetched.Where(s => s is not null).ToList()!;
+        return await FetchSummaryBatchesAsync(titleToQid, language, includeLanguage: false, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     /// <summary>
@@ -118,62 +99,149 @@ public sealed class WikipediaService
 
         foreach (var (id, entity) in entities)
         {
-            if (entity.Sitelinks is null) continue;
-
-            foreach (var lang in langChain)
+            if (entity.Sitelinks is not null)
             {
-                var siteKey = $"{lang}wiki";
-                if (entity.Sitelinks.TryGetValue(siteKey, out var sitelink) && !string.IsNullOrEmpty(sitelink.Title))
+                foreach (var lang in langChain)
                 {
-                    qidToLangTitle[id] = (lang, sitelink.Title);
-                    break;
+                    var siteKey = $"{lang}wiki";
+                    if (entity.Sitelinks.TryGetValue(siteKey, out var sitelink) && !string.IsNullOrEmpty(sitelink.Title))
+                    {
+                        qidToLangTitle[id] = (lang, sitelink.Title);
+                        break;
+                    }
                 }
+            }
+
+            if (!qidToLangTitle.ContainsKey(id))
+            {
+                _ctx.Diagnostics.RecordFailure(
+                    WikidataFailureKind.NoSitelink,
+                    "wikipedia.summary",
+                    $"No Wikipedia sitelink exists for {id} in the configured fallback chain.",
+                    id);
             }
         }
 
         if (qidToLangTitle.Count == 0)
             return [];
 
-        var tasks = qidToLangTitle.Select(async kvp =>
+        var grouped = qidToLangTitle
+            .GroupBy(kvp => kvp.Value.Language, StringComparer.OrdinalIgnoreCase)
+            .Select(group =>
+            {
+                var titleToQid = group.ToDictionary(
+                    kvp => kvp.Value.Title,
+                    kvp => kvp.Key,
+                    StringComparer.OrdinalIgnoreCase);
+                return FetchSummaryBatchesAsync(titleToQid, group.Key, includeLanguage: true, cancellationToken);
+            });
+
+        var fetched = await Task.WhenAll(grouped).ConfigureAwait(false);
+        return fetched.SelectMany(s => s).ToList();
+    }
+
+    private async Task<IReadOnlyList<WikipediaSummary>> FetchSummaryBatchesAsync(
+        IReadOnlyDictionary<string, string> titleToQid,
+        string language,
+        bool includeLanguage,
+        CancellationToken cancellationToken)
+    {
+        var results = new List<WikipediaSummary>();
+        var batchSize = Math.Clamp(_ctx.Options.WikipediaRateLimit.MaxBatchSize, 1, 50);
+        var titles = titleToQid.Keys
+            .OrderBy(title => title, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        for (var i = 0; i < titles.Count; i += batchSize)
         {
-            try
-            {
-                var lang = kvp.Value.Language;
-                var title = kvp.Value.Title;
-                var url = $"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{Uri.EscapeDataString(title)}";
-                var json = await _ctx.ResilientClient.GetStringAsync(
-                    url, cancellationToken, applyMaxLag: false).ConfigureAwait(false);
-                var response = System.Text.Json.JsonSerializer.Deserialize(json,
-                    WikidataJsonContext.Default.WikipediaSummaryResponse);
+            var batch = titles.Skip(i).Take(batchSize).ToList();
+            _ctx.Diagnostics.RecordBatch("wikipedia.summary", batch.Count);
 
-                if (response is not null && !string.IsNullOrEmpty(response.Extract))
+            var titlesParam = string.Join('|', batch);
+            var url = $"https://{language}.wikipedia.org/w/api.php?action=query" +
+                      "&prop=extracts|pageimages|info|description" +
+                      "&exintro=1&explaintext=1&pithumbsize=320&piprop=thumbnail&inprop=url" +
+                      $"&redirects=1&format=json&formatversion=2&titles={Uri.EscapeDataString(titlesParam)}";
+
+            var json = await _ctx.ResilientClient.GetStringAsync(url, cancellationToken)
+                .ConfigureAwait(false);
+            var response = ProviderJson.Deserialize(
+                json,
+                WikidataJsonContext.Default.WikipediaSummaryBatchResponse,
+                "wikipedia.summary");
+
+            if (response?.Query?.Pages is not { Count: > 0 } pages)
+                continue;
+
+            var titleLookup = BuildTitleLookup(titleToQid, response.Query);
+
+            foreach (var page in pages)
+            {
+                if (page.Missing || string.IsNullOrWhiteSpace(page.Extract))
                 {
-                    return new WikipediaSummary
+                    if (TryResolveQidForTitle(page.Title, titleLookup, out var missingQid))
                     {
-                        EntityId = kvp.Key,
-                        Title = response.Title,
-                        Extract = response.Extract,
-                        Description = response.Description,
-                        ThumbnailUrl = response.Thumbnail?.Source,
-                        ArticleUrl = response.ContentUrls?.Desktop?.Page
-                            ?? $"https://{lang}.wikipedia.org/wiki/{Uri.EscapeDataString(title)}",
-                        Language = lang
-                    };
+                        _ctx.Diagnostics.RecordFailure(
+                            WikidataFailureKind.NotFound,
+                            "wikipedia.summary",
+                            $"Wikipedia summary was not found for {page.Title}.",
+                            missingQid);
+                    }
+                    continue;
                 }
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch
-            {
-                // Skip on failure
-            }
-            return null;
-        });
 
-        var fetched = await Task.WhenAll(tasks).ConfigureAwait(false);
-        return fetched.Where(s => s is not null).ToList()!;
+                if (!TryResolveQidForTitle(page.Title, titleLookup, out var qid))
+                    continue;
+
+                results.Add(new WikipediaSummary
+                {
+                    EntityId = qid,
+                    Title = page.Title,
+                    Extract = page.Extract,
+                    Description = page.Description,
+                    ThumbnailUrl = page.Thumbnail?.Source,
+                    ArticleUrl = page.FullUrl
+                        ?? $"https://{language}.wikipedia.org/wiki/{Uri.EscapeDataString(page.Title)}",
+                    Language = includeLanguage ? language : null
+                });
+            }
+        }
+
+        return results;
+    }
+
+    private static Dictionary<string, string> BuildTitleLookup(
+        IReadOnlyDictionary<string, string> titleToQid,
+        WikipediaSummaryBatchQuery query)
+    {
+        var lookup = new Dictionary<string, string>(titleToQid, StringComparer.OrdinalIgnoreCase);
+        AddTitleMappings(lookup, query.Normalized);
+        AddTitleMappings(lookup, query.Redirects);
+        return lookup;
+    }
+
+    private static void AddTitleMappings(Dictionary<string, string> lookup, List<WikipediaTitleMap>? mappings)
+    {
+        if (mappings is null)
+            return;
+
+        foreach (var mapping in mappings)
+        {
+            if (lookup.TryGetValue(mapping.From, out var qid))
+                lookup[mapping.To] = qid;
+        }
+    }
+
+    private static bool TryResolveQidForTitle(
+        string title,
+        IReadOnlyDictionary<string, string> titleLookup,
+        out string qid)
+    {
+        if (titleLookup.TryGetValue(title, out qid!))
+            return true;
+
+        qid = "";
+        return false;
     }
 
     /// <summary>
@@ -196,6 +264,14 @@ public sealed class WikipediaService
             {
                 titleToQid[sitelink.Title] = id;
             }
+            else
+            {
+                _ctx.Diagnostics.RecordFailure(
+                    WikidataFailureKind.NoSitelink,
+                    "wikipedia.sections",
+                    $"No {language} Wikipedia sitelink exists for {id}.",
+                    id);
+            }
         }
 
         if (titleToQid.Count == 0)
@@ -211,8 +287,10 @@ public sealed class WikipediaService
                           $"&page={Uri.EscapeDataString(kvp.Key)}&prop=tocdata&format=json";
                 var json = await _ctx.ResilientClient.GetStringAsync(url, cancellationToken)
                     .ConfigureAwait(false);
-                var response = System.Text.Json.JsonSerializer.Deserialize(json,
-                    WikidataJsonContext.Default.ParseResponse);
+                var response = ProviderJson.Deserialize(
+                    json,
+                    WikidataJsonContext.Default.ParseResponse,
+                    "parse.toc");
 
                 if (response?.Parse?.TocData?.Sections is { Count: > 0 } sections)
                 {
@@ -229,6 +307,10 @@ public sealed class WikipediaService
                 }
             }
             catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (WikidataProviderException)
             {
                 throw;
             }
@@ -334,6 +416,11 @@ public sealed class WikipediaService
             entity.Sitelinks?.TryGetValue(siteKey, out var sitelink) != true ||
             string.IsNullOrEmpty(sitelink!.Title))
         {
+            _ctx.Diagnostics.RecordFailure(
+                WikidataFailureKind.NoSitelink,
+                "wikipedia.sitelink",
+                $"No {language} Wikipedia sitelink exists for {qid}.",
+                qid);
             return null;
         }
 
@@ -349,8 +436,10 @@ public sealed class WikipediaService
                       "&prop=text&format=json";
             var json = await _ctx.ResilientClient.GetStringAsync(url, cancellationToken)
                 .ConfigureAwait(false);
-            var response = System.Text.Json.JsonSerializer.Deserialize(json,
-                WikidataJsonContext.Default.ParseResponse);
+            var response = ProviderJson.Deserialize(
+                json,
+                WikidataJsonContext.Default.ParseResponse,
+                "parse.section");
 
             if (response?.Error is not null || response?.Parse?.Text?.Html is null)
                 return null;
@@ -359,6 +448,10 @@ public sealed class WikipediaService
             return string.IsNullOrWhiteSpace(text) ? null : text;
         }
         catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (WikidataProviderException)
         {
             throw;
         }

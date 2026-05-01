@@ -7,6 +7,7 @@ namespace Tuvima.Wikidata.Internal.Json;
 [JsonSerializable(typeof(WbGetEntitiesResponse))]
 [JsonSerializable(typeof(RecentChangesResponse))]
 [JsonSerializable(typeof(WikipediaSummaryResponse))]
+[JsonSerializable(typeof(WikipediaSummaryBatchResponse))]
 [JsonSerializable(typeof(RevisionQueryResponse))]
 [JsonSerializable(typeof(ParseResponse))]
 [JsonSourceGenerationOptions(

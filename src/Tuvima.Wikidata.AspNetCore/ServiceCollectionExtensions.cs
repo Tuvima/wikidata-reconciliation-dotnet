@@ -38,7 +38,7 @@ public static class ServiceCollectionExtensions
         });
 
         // Sub-service registrations — each resolves from the facade so all share the same
-        // context (HttpClient, concurrency limiter, options).
+        // context (HttpClient, provider-safe HTTP pipeline, diagnostics, cache hook, options).
         services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Reconcile);
         services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Entities);
         services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Wikipedia);

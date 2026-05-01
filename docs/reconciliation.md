@@ -105,7 +105,7 @@ var results = await reconciler.ReconcileAsync(new ReconciliationRequest
 
 ## Batch Reconciliation
 
-Reconcile multiple queries with automatic concurrency limiting. `MaxConcurrency` now caps actual outbound HTTP requests across the shared request sender, not just the number of top-level batch items:
+Reconcile multiple queries with automatic provider-safe limiting. As of v2.6.0, all outbound provider requests pass through shared per-host limiters (`WikidataRateLimit`, `WikipediaRateLimit`, `CommonsRateLimit`) rather than relying only on top-level batch concurrency:
 
 ```csharp
 var results = await reconciler.Reconcile.ReconcileBatchAsync([

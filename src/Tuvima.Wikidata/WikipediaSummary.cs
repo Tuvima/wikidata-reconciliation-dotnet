@@ -1,7 +1,7 @@
 namespace Tuvima.Wikidata;
 
 /// <summary>
-/// A summary extracted from a Wikipedia article via the REST API.
+/// A summary extracted from a Wikipedia article.
 /// </summary>
 public sealed class WikipediaSummary
 {

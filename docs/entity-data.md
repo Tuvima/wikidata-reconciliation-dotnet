@@ -98,6 +98,8 @@ foreach (var s in summaries)
 }
 ```
 
+As of v2.6.0, summaries are fetched in provider-safe batches and mapped back to the originating QID. Missing sitelinks and missing summary pages are recorded in `reconciler.Diagnostics` with typed `WikidataFailureKind` values instead of requiring consumers to infer provider behavior from exception strings.
+
 ### Language Fallback
 
 ```csharp
