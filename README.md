@@ -39,9 +39,9 @@ This is the first .NET Wikidata reconciliation library, filling a gap in the eco
 | [`Tuvima.Wikidata`](https://www.nuget.org/packages/Tuvima.Wikidata) | Core library — reconciliation, entity data, Wikipedia content, graph traversal |
 | [`Tuvima.Wikidata.AspNetCore`](https://www.nuget.org/packages/Tuvima.Wikidata.AspNetCore) | ASP.NET Core middleware for hosting a W3C Reconciliation Service API |
 
-Current release: `2.6.0`
+Current release: `3.0.0`
 
-Current validation: 113 unit tests + 80 live integration tests = 193 total.
+Current validation: 108 offline unit tests plus the live integration suite.
 
 ## Installation
 
@@ -172,6 +172,33 @@ foreach (var real in author.RealAuthors!)
 
 New DTO: `RealAuthor` (lightweight `Qid` + `CanonicalName` ref). Unit tests expanded to 92, integration tests to 37.
 
+## What's New in v3.0.0
+
+Breaking release for media identity workflows.
+
+- **`reconciler.Bridge.ResolveBatchAsync(...)` replaces the public Stage2 API.** Submit `BridgeResolutionRequest` items with known provider IDs, media kind, title/creator/year hints, and rollup preference. Results include the selected candidate, ranked alternatives, typed failure state, diagnostics, and canonical rollup path.
+- **Stage2 public types were removed.** `WikidataReconciler.Stage2`, `Stage2Service`, `IStage2Request`, `Stage2Request`, `Stage2Result`, and the concrete Stage2 request types are gone.
+- **Bridge catalog expanded.** Built-in mappings and normalization cover ISBN, IMDb, TMDB, TVDB, OpenLibrary, Google Books, Apple Books/Music/TV/iTunes, MusicBrainz, ComicVine, Goodreads, ASIN, and custom caller-supplied Wikidata property keys.
+- **Edition/release rollups and relationship extraction.** Bridge results can carry `CanonicalRollup`, series/order data from P179/P1545/P155/P156/P361/P527, and auditable relationship edges for series, universe, parent work, part, and has-part relationships.
+- **QID-based Wikipedia summary results.** `WikipediaService` now exposes typed summary/description results with preferred-language fallback, clean no-sitelink/not-found outcomes, source provider, URL, and language fields.
+
+```csharp
+var requests = new[]
+{
+    new BridgeResolutionRequest
+    {
+        CorrelationKey = "movie-42",
+        MediaKind = BridgeMediaKind.Movie,
+        BridgeIds = new Dictionary<string, string> { ["imdb_id"] = "tt0371724" },
+        Title = "The Hitchhiker's Guide to the Galaxy",
+        RollupTarget = BridgeRollupTarget.ReturnWorkAndEdition
+    }
+};
+
+var results = await reconciler.Bridge.ResolveBatchAsync(requests);
+var selected = results["movie-42"].SelectedCandidate;
+```
+
 ## What's New in v2.3.0
 
 Additive release closing out the library behavior gaps identified during v2.0–v2.2 integration testing.
@@ -186,25 +213,9 @@ Integration test coverage expanded to 34 live-Wikidata tests (from 28), unit tes
 
 ## What's New in v2.2.0
 
-Additive release — no breaking changes. Completes the original plan's primitive expansion.
+Additive release — no breaking changes in the v2 line. This public Stage 2 API was removed in v3.0; use the `reconciler.Bridge` example above for current code.
 
 - **`reconciler.Stage2.ResolveBatchAsync(...)`** — unified Stage 2 resolver for bridge IDs, music albums, and type-filtered text reconciliation. Uses a discriminated marker-interface hierarchy (`BridgeStage2Request`, `MusicStage2Request`, `TextStage2Request`) so the strategy is chosen at compile time, not guessed at runtime. Groups identical requests by natural key across a batch. Supports edition ↔ work pivoting via `EditionPivotRule` with fuzzy-match ranking hints.
-
-```csharp
-var bridge = Stage2Request.Bridge(
-    correlationKey: "book-42",
-    bridgeIds: new Dictionary<string, string> { ["isbn13"] = "9780441172719" },
-    wikidataProperties: new Dictionary<string, string> { ["isbn13"] = "P212" },
-    editionPivot: new EditionPivotRule
-    {
-        WorkClasses = ["Q7725634"],
-        EditionClasses = ["Q3331189", "Q122731938"]
-    });
-
-var text = Stage2Request.Text("tv-12", "Breaking Bad", ["Q5398426"]);
-
-var results = await reconciler.Stage2.ResolveBatchAsync([bridge, text]);
-```
 
 The plan's original v1.1.0 primitive expansion is now fully landed across v2.0, v2.1, and v2.2.
 

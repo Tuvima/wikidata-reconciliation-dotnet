@@ -204,7 +204,7 @@ var audiobooks = await reconciler.Editions.GetEditionsAsync("Q190192", filterTyp
 var work = await reconciler.Editions.GetWorkForEditionAsync("Q15228");
 ```
 
-For declarative edition-pivoting (e.g., "resolve an ISBN and automatically walk back to the work"), use the Stage 2 service — see `docs/migrating-to-v2.md` and `EditionPivotRule`.
+For declarative edition/work rollups (e.g., "resolve an ISBN and automatically walk back to the work"), use `reconciler.Bridge.ResolveAsync(...)` with `BridgeResolutionRequest.RollupTarget = BridgeRollupTarget.CanonicalWork`.
 
 ## Child Entity Traversal (v2.0)
 

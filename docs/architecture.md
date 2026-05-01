@@ -1,8 +1,8 @@
 # Architecture
 
-## Component Overview (v2.6.0+)
+## Component Overview (v3.0.0+)
 
-`WikidataReconciler` is a thin **facade** that owns a shared `ReconcilerContext` (HttpClient, options, collaborator instances, shared provider-safe HTTP pipeline, diagnostics, cache hook, and host limiters) and exposes nine focused **sub-services** as properties. Each sub-service owns a slice of the API surface and can be injected independently in DI without going through the facade.
+`WikidataReconciler` is a thin **facade** that owns a shared `ReconcilerContext` (HttpClient, options, collaborator instances, shared provider-safe HTTP pipeline, diagnostics, cache hook, and host limiters) and exposes focused **sub-services** as properties. Each sub-service owns a slice of the API surface and can be injected independently in DI without going through the facade.
 
 ```
 WikidataReconciler (facade, owns ReconcilerContext)
@@ -14,7 +14,7 @@ WikidataReconciler (facade, owns ReconcilerContext)
 ├── Authors    → AuthorsService          multi-author split + pen-name resolution
 ├── Labels     → LabelsService           single + batch label lookup with fallback chain
 ├── Persons    → PersonsService          role-aware person search with occupation filtering  [v2.1]
-└── Stage2     → Stage2Service           unified bridge/music/text resolver with discriminated requests  [v2.2]
+└── Bridge     → BridgeResolutionService bridge IDs, ranked identity candidates, rollups, relationships  [v3.0]
 
 Shared internals (Tuvima.Wikidata.Internal):
 ├── ReconcilerContext           <- shared state holder for facade and all sub-services
@@ -108,7 +108,7 @@ Wikipedia summaries use batched MediaWiki `action=query&prop=extracts|pageimages
 - **maxlag parameter** — appended to every Wikidata API request per Wikimedia bot etiquette.
 - **Graph module: no RDF** — the graph module uses adjacency lists and BFS, not RDF/SPARQL. The operations (pathfinding, family trees, cross-media detection) don't require a full graph database.
 - **Facade + sub-services (v2.0)** — the root `WikidataReconciler` is a thin facade over nine focused sub-services. The shared `ReconcilerContext` ensures all services use the same HttpClient, options, HTTP pipeline, diagnostics, cache hook, and host limiters. Sub-services are constructed once at facade init and exposed as properties; they are also registered individually by `AddWikidataReconciliation()` so DI consumers can inject a narrow slice.
-- **Discriminated Stage 2 requests (v2.2)** — the Stage 2 resolver uses a marker interface `IStage2Request` with three sealed concrete implementations (`BridgeStage2Request`, `MusicStage2Request`, `TextStage2Request`) instead of a single struct with mutually-exclusive fields. The strategy is the type; illegal combinations are unrepresentable; `TextStage2Request.CirrusSearchTypes` is `required` and validated non-empty at resolve time.
+- **Bridge resolution (v3.0)** — the old public Stage2 request hierarchy was removed. `BridgeResolutionService` accepts one `BridgeResolutionRequest` shape with bridge IDs, media kind, title/creator/year hints, and rollup target; it returns ranked candidates, typed failure state, diagnostics, relationship edges, and canonical rollup details.
 
 ## Wikidata API Endpoints Used
 

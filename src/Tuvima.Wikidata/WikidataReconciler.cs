@@ -6,7 +6,7 @@ namespace Tuvima.Wikidata;
 /// <summary>
 /// Facade for the Tuvima.Wikidata library. Exposes focused sub-services:
 /// <see cref="Reconcile"/>, <see cref="Entities"/>, <see cref="Wikipedia"/>,
-/// <see cref="Editions"/>, <see cref="Children"/>, <see cref="Authors"/>, <see cref="Labels"/>.
+/// <see cref="Editions"/>, <see cref="Children"/>, <see cref="Authors"/>, <see cref="Labels"/>, <see cref="Bridge"/>.
 /// <para>
 /// Top-level methods on this class remain as thin delegates to their owning sub-service
 /// for source-compat with v1 call sites; new code should prefer calling the sub-services directly.
@@ -41,8 +41,8 @@ public sealed class WikidataReconciler : IDisposable
     /// <summary>Role-aware person search (humans + musical groups) with occupation filtering and year/work hints.</summary>
     public PersonsService Persons { get; }
 
-    /// <summary>Unified Stage 2 resolver for bridge IDs, music albums, and type-filtered text reconciliation.</summary>
-    public Stage2Service Stage2 { get; }
+    /// <summary>High-level bridge and identity resolution.</summary>
+    public BridgeResolutionService Bridge { get; }
 
     /// <summary>Shared HTTP/cache/throttle telemetry for all sub-services owned by this reconciler.</summary>
     public WikidataDiagnostics Diagnostics => _context.Diagnostics;
@@ -72,7 +72,7 @@ public sealed class WikidataReconciler : IDisposable
         Authors = new AuthorsService(_context, Reconcile);
         Labels = new LabelsService(_context);
         Persons = new PersonsService(_context, Reconcile, Labels);
-        Stage2 = new Stage2Service(_context, Reconcile, Editions, Authors, Persons);
+        Bridge = new BridgeResolutionService(_context, Reconcile);
     }
 
     // ─── Back-compat delegates (v1 API surface) ─────────────────────

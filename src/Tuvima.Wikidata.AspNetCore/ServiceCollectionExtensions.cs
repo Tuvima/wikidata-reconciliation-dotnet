@@ -11,9 +11,9 @@ public static class ServiceCollectionExtensions
 {
     /// <summary>
     /// Registers <see cref="WikidataReconciler"/> as a singleton with a named HttpClient,
-    /// along with each sub-service (<see cref="ReconciliationService"/>, <see cref="EntityService"/>,
-    /// <see cref="WikipediaService"/>, <see cref="EditionService"/>, <see cref="ChildrenService"/>,
-    /// <see cref="AuthorsService"/>, <see cref="LabelsService"/>).
+        /// along with each sub-service (<see cref="ReconciliationService"/>, <see cref="EntityService"/>,
+        /// <see cref="WikipediaService"/>, <see cref="EditionService"/>, <see cref="ChildrenService"/>,
+    /// <see cref="AuthorsService"/>, <see cref="LabelsService"/>, <see cref="BridgeResolutionService"/>).
     /// <para>
     /// Advanced consumers can inject a specific sub-service directly without going through the facade.
     /// </para>
@@ -47,7 +47,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Authors);
         services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Labels);
         services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Persons);
-        services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Stage2);
+        services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Bridge);
 
         return services;
     }

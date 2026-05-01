@@ -140,6 +140,131 @@ public sealed class WikipediaService
         return fetched.SelectMany(s => s).ToList();
     }
 
+    /// <summary>
+    /// Fetches one QID-based Wikipedia summary with language fallback and a typed not-found result.
+    /// </summary>
+    public async Task<WikipediaSummaryResult> GetWikipediaSummaryAsync(
+        string qid,
+        string language = "en",
+        IReadOnlyList<string>? fallbackLanguages = null,
+        CancellationToken cancellationToken = default)
+    {
+        var batch = await GetWikipediaSummaryResultsAsync([qid], language, fallbackLanguages, cancellationToken)
+            .ConfigureAwait(false);
+        return batch.TryGetValue(qid, out var result)
+            ? result
+            : new WikipediaSummaryResult
+            {
+                EntityId = qid,
+                Found = false,
+                Language = language,
+                FailureKind = WikidataFailureKind.NotFound,
+                FailureMessage = "No Wikipedia summary result was produced."
+            };
+    }
+
+    /// <summary>
+    /// Fetches QID-based Wikipedia summaries with preferred language fallback and one result per input QID.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, WikipediaSummaryResult>> GetWikipediaSummaryResultsAsync(
+        IReadOnlyList<string> qids,
+        string language = "en",
+        IReadOnlyList<string>? fallbackLanguages = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(qids);
+        var distinct = qids
+            .Where(q => !string.IsNullOrWhiteSpace(q))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var summaries = fallbackLanguages is null
+            ? await GetWikipediaSummariesAsync(distinct, language, cancellationToken).ConfigureAwait(false)
+            : await GetWikipediaSummariesAsync(distinct, language, fallbackLanguages, cancellationToken).ConfigureAwait(false);
+
+        var byQid = summaries.ToDictionary(s => s.EntityId, StringComparer.OrdinalIgnoreCase);
+        var results = new Dictionary<string, WikipediaSummaryResult>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var qid in distinct)
+        {
+            if (byQid.TryGetValue(qid, out var summary))
+            {
+                results[qid] = new WikipediaSummaryResult
+                {
+                    EntityId = qid,
+                    Found = true,
+                    Summary = summary.Extract,
+                    PageTitle = summary.Title,
+                    PageUrl = summary.ArticleUrl,
+                    Language = summary.Language ?? language,
+                    SourceProvider = "wikipedia"
+                };
+            }
+            else
+            {
+                results[qid] = new WikipediaSummaryResult
+                {
+                    EntityId = qid,
+                    Found = false,
+                    Language = language,
+                    FailureKind = WikidataFailureKind.NoSitelink,
+                    FailureMessage = "No Wikipedia page or summary exists for the requested QID in the configured language fallback chain."
+                };
+            }
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Fetches structured Wikidata/Wikipedia descriptions without blending them with app-side retail data.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, WikidataDescriptionResult>> GetDescriptionsAsync(
+        IReadOnlyList<string> qids,
+        string language = "en",
+        IReadOnlyList<string>? fallbackLanguages = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(qids);
+        var distinct = qids
+            .Where(q => !string.IsNullOrWhiteSpace(q))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var entitiesTask = _ctx.EntityFetcher.FetchEntitiesAsync(distinct, language, cancellationToken);
+        var summariesTask = GetWikipediaSummaryResultsAsync(distinct, language, fallbackLanguages, cancellationToken);
+
+        await Task.WhenAll(entitiesTask, summariesTask).ConfigureAwait(false);
+
+        var entities = await entitiesTask.ConfigureAwait(false);
+        var summaries = await summariesTask.ConfigureAwait(false);
+        var results = new Dictionary<string, WikidataDescriptionResult>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var qid in distinct)
+        {
+            entities.TryGetValue(qid, out var entity);
+            summaries.TryGetValue(qid, out var summary);
+
+            WikidataEntityInfo? mapped = entity is null ? null : EntityMapper.MapEntity(entity, language);
+            results[qid] = new WikidataDescriptionResult
+            {
+                EntityId = qid,
+                Found = mapped is not null || summary?.Found == true,
+                WikipediaDescription = summary?.Summary,
+                WikidataDescription = mapped?.Description,
+                ShortDescription = summary?.Found == true ? summary.PageTitle : null,
+                Aliases = mapped?.Aliases ?? [],
+                Language = summary?.Language ?? language,
+                FailureKind = mapped is null && summary?.Found != true ? WikidataFailureKind.NotFound : null,
+                FailureMessage = mapped is null && summary?.Found != true
+                    ? "No Wikidata entity or Wikipedia description was found for the requested QID."
+                    : null
+            };
+        }
+
+        return results;
+    }
+
     private async Task<IReadOnlyList<WikipediaSummary>> FetchSummaryBatchesAsync(
         IReadOnlyDictionary<string, string> titleToQid,
         string language,

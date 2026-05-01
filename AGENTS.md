@@ -8,9 +8,9 @@ Two NuGet packages:
 - `Tuvima.Wikidata` — core library, zero external dependencies
 - `Tuvima.Wikidata.AspNetCore` — W3C Reconciliation API middleware for ASP.NET Core
 
-## Architecture (v2.6.0)
+## Architecture (v3.0.0)
 
-`WikidataReconciler` is a thin **facade** that owns a shared `ReconcilerContext` (HttpClient, options, search/fetcher/scorer/type-checker collaborators, shared provider-safe HTTP pipeline, response cache hook, diagnostics, and per-host limiters) and exposes nine focused **sub-services** as properties:
+`WikidataReconciler` is a thin **facade** that owns a shared `ReconcilerContext` (HttpClient, options, search/fetcher/scorer/type-checker collaborators, shared provider-safe HTTP pipeline, response cache hook, diagnostics, and per-host limiters) and exposes focused **sub-services** as properties:
 
 ```
 WikidataReconciler (facade, owns ReconcilerContext)
@@ -22,7 +22,7 @@ WikidataReconciler (facade, owns ReconcilerContext)
 ├── Authors      → AuthorsService          (multi-author split + pen-name resolution)
 ├── Labels       → LabelsService           (single + batch label lookup with fallback chain)
 ├── Persons      → PersonsService          (role-aware person search with occupation filtering, year/work hints, group expansion)  [v2.1]
-└── Stage2       → Stage2Service           (unified bridge/music/text resolver with discriminated request hierarchy, edition pivoting, batch grouping)  [v2.2]
+└── Bridge       → BridgeResolutionService (bridge IDs, ranked candidates, canonical rollups, relationships, diagnostics)  [v3.0]
 
 Shared internals (Tuvima.Wikidata.Internal):
 ├── ReconcilerContext           <- shared state for all sub-services
@@ -100,15 +100,12 @@ src/
 │   ├── PersonRole.cs                        # Enum for Persons.SearchAsync: Author|Narrator|Director|Actor|VoiceActor|Composer|Performer|Artist|Screenwriter (v2.1)
 │   ├── PersonSearchRequest.cs               # Persons.SearchAsync input: Name, Role, TitleHint, WorkQid, IncludeMusicalGroups, BirthYearHint, DeathYearHint, CompanionNameHints, ExpandGroupMembers, AcceptThreshold (v2.1)
 │   ├── PersonSearchResult.cs                # Persons.SearchAsync output: Found, Qid, CanonicalName, IsGroup, Score, Occupations, NotableWorks, GroupMembers (v2.1)
-│   ├── IStage2Request.cs                    # Marker interface for Stage 2 resolve requests (v2.2)
-│   ├── BridgeStage2Request.cs               # External-ID-based Stage 2 request with BridgeIds, WikidataProperties, PreferredOrder, EditionPivot (v2.2)
-│   ├── MusicStage2Request.cs                # Music album Stage 2 request with AlbumTitle, Artist (v2.2)
-│   ├── TextStage2Request.cs                 # Text Stage 2 request with Title, Author, required CirrusSearchTypes, AllowUnfilteredText, QueryCleaners, AcceptThreshold (v2.2)
-│   ├── Stage2Request.cs                     # Static factory — .Bridge(), .Music(), .Text() for dynamic construction (v2.2)
-│   ├── Stage2Result.cs                      # Found, Qid, WorkQid, EditionQid, IsEdition, MatchedBy, PrimaryBridgeIdType, CollectedBridgeIds, Label (v2.2)
-│   ├── Stage2MatchedStrategy.cs             # Enum: NotResolved | BridgeId | MusicAlbum | TextReconciliation (v2.2)
-│   ├── EditionPivotRule.cs                  # WorkClasses, EditionClasses, PreferEdition, RankingHints (v2.2)
-│   ├── RankingHint.cs                       # PropertyId, Values, Weight — soft ranking signal for edition pivoting (v2.2)
+│   ├── BridgeResolutionRequest.cs           # High-level bridge/identity request (v3.0)
+│   ├── BridgeResolutionResult.cs            # One result per input with selected/ranked candidates, failure, diagnostics (v3.0)
+│   ├── BridgeCandidate.cs                   # Ranked candidate shape with QID, labels, matched property, confidence, reasons (v3.0)
+│   ├── CanonicalRollup.cs                   # Resolved entity QID, canonical work QID, relationship path (v3.0)
+│   ├── BridgeSeriesInfo.cs                  # Series/order extraction output (v3.0)
+│   ├── BridgeRelationshipEdge.cs            # Auditable relationship edges with property IDs (v3.0)
 │   ├── SectionContent.cs                    # Title, Content (structured section content for subsection handling)
 │   ├── QueryCleaners.cs                     # Built-in title pre-cleaning functions
 │   ├── CachingDelegatingHandler.cs          # Abstract HTTP caching base class
@@ -121,7 +118,7 @@ src/
 │   │   ├── AuthorsService.cs                # ResolveAsync — multi-author split + pen-name detection
 │   │   ├── LabelsService.cs                 # GetAsync, GetBatchAsync with language fallback
 │   │   ├── PersonsService.cs                # SearchAsync — role-aware person search (v2.1)
-│   │   └── Stage2Service.cs                 # ResolveAsync / ResolveBatchAsync with discriminated IStage2Request hierarchy (v2.2)
+│   │   ├── BridgeResolutionService.cs       # ResolveAsync / ResolveBatchAsync high-level identity bridge (v3.0)
 │   ├── Graph/                               # Entity graph traversal module
 │   │   ├── EntityGraph.cs                   # Core graph class — adjacency lists, BFS pathfinding, family trees
 │   │   ├── GraphNode.cs                     # Entity node input model (Qid, Label, Type, WorkQids)
@@ -169,7 +166,8 @@ tests/
     ├── FuzzyMatcherTests.cs                 # Unit tests for fuzzy matching
     ├── PropertyMatcherTests.cs              # Unit tests for property matching
     ├── LanguageFallbackTests.cs             # Unit tests for language fallback
-    ├── ResilienceAndStage2Tests.cs          # Unit tests for cancellation, pagination, and Stage 2 QID constraints
+    ├── ResilienceAndStage2Tests.cs          # Unit tests for cancellation and pagination
+    ├── BridgeResolutionServiceTests.cs      # Unit tests for bridge batching, ranking, rollups, and Wikipedia summary failures
     ├── TestHttpMessageHandler.cs            # Test HTTP shim for deterministic service tests
     └── TestPayloads.cs                      # Shared JSON payload builders for service tests
 docs/
@@ -257,20 +255,18 @@ New code should call sub-services via `reconciler.{Service}.{Method}(...)`. All 
 |---|---|
 | `SearchAsync(PersonSearchRequest)` | **NEW.** Role-aware person search. Reconciles against Q5 (human) + optionally Q215380/Q5741069 (musical groups). Uses an internal `FrozenDictionary<PersonRole, string[]>` to map roles (`Author`, `Narrator`, `Director`, `Actor`, `VoiceActor`, `Composer`, `Performer`, `Artist`, `Screenwriter`) to canonical P106 occupation QIDs. `IncludeMusicalGroups` is `bool?` with per-role defaults (`Performer` and `Artist` default to true). `BirthYearHint`, `DeathYearHint`, and `WorkQid` feed property constraints; `TitleHint` now feeds the notable-work reranking path when explicit `CompanionNameHints` are absent. When `ExpandGroupMembers` is true and the hit is a group, populates `GroupMembers` from P527. |
 
-### `reconciler.Stage2` — `Stage2Service` (v2.2)
+### `reconciler.Bridge` — `BridgeResolutionService` (v3.0)
 
 | Method | Purpose |
 |---|---|
-| `ResolveAsync(IStage2Request)` | **NEW.** Resolves a single Stage 2 request (wrapper for the batch call). |
-| `ResolveBatchAsync(IReadOnlyList<IStage2Request>)` | **NEW.** Unified resolver for `BridgeStage2Request`, `MusicStage2Request`, `TextStage2Request`. Groups identical requests by natural key (bridge: first non-empty ID in preferred order; music: `(AlbumTitle, Artist)`; text: `(Title, Author, sorted types)`) so N duplicates share one API round-trip. Resolves artist/author strings through `PersonsService` / `AuthorsService` before applying item constraints. Returns `IReadOnlyDictionary<CorrelationKey, Stage2Result>` with every input key present. |
+| `ResolveAsync(BridgeResolutionRequest)` | Resolves one bridge/identity request. |
+| `ResolveBatchAsync(IReadOnlyList<BridgeResolutionRequest>)` | Resolves many bridge/identity requests, grouping identical external-ID lookups by `(propertyId, normalizedValue)` and returning one `BridgeResolutionResult` per correlation key. |
 
 Key design notes:
-- Discriminated request hierarchy via marker interface `IStage2Request` — no auto-detect heuristic, illegal field combinations are unrepresentable.
-- `TextStage2Request.CirrusSearchTypes` is `required` and validated non-empty at resolve time unless `AllowUnfilteredText = true`.
-- `EditionPivotRule` captures edition ↔ work pivoting media-type-agnostically. `PreferEdition = true` walks work → P747 editions and ranks via `RankingHint` list (fuzzy-match against property claim values or entity labels, weighted average, QID tiebreaker).
-- Music artist strings are resolved through `PersonsService` and text author strings are resolved through `AuthorsService` before Stage 2 applies item-property constraints.
-- `Stage2Result` does not leak claims — carries only identifiers + strategy metadata + label. Consumers needing full entity data follow up with `Entities.GetEntitiesAsync`.
-- Static factory `Stage2Request.Bridge(...)` / `.Music(...)` / `.Text(...)` for dynamic construction from heterogeneous source data.
+- The public Stage2 compatibility layer was removed in v3.0. Use one request shape: `BridgeResolutionRequest`.
+- Built-in bridge catalog covers Apple, TMDB, IMDb, TVDB, ISBN, OpenLibrary, Google Books, MusicBrainz, ComicVine, Goodreads, ASIN, and custom caller-supplied property keys.
+- Results include selected/ranked candidates, typed success/failure, reason codes, warnings, provider diagnostics, canonical P629/P747 rollup path, series/order data, and relationship edges.
+- Tuvima.Wikidata does not call retail APIs; it only uses supplied bridge identifiers as Wikidata external-ID values.
 
 ### `reconciler.Diagnostics` — `WikidataDiagnostics` (v2.6)
 

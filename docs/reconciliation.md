@@ -221,7 +221,7 @@ Console.WriteLine($"Type penalty:   {b.TypePenaltyApplied}");
 
 ## Reverse Lookup by External ID
 
-Find an entity by ISBN, IMDB ID, ORCID, or any external identifier. This is the low-level primitive — for full Stage 2 resolution with edition pivoting and batch grouping, use `reconciler.Stage2.ResolveBatchAsync(...)` (v2.2+).
+Find an entity by ISBN, IMDB ID, ORCID, or any external identifier. This is the low-level primitive; for high-level bridge resolution with ranking, diagnostics, text fallback, and edition/work rollups, use `reconciler.Bridge.ResolveBatchAsync(...)` (v3.0+).
 
 ```csharp
 var results = await reconciler.Entities.LookupByExternalIdAsync("P214", "113230702"); // VIAF
@@ -229,29 +229,31 @@ var results = await reconciler.Entities.LookupByExternalIdAsync("P212", "978-0-3
 var results = await reconciler.Entities.LookupByExternalIdAsync("P345", "tt0371724"); // IMDB
 ```
 
-## Unified Stage 2 Resolve (v2.2)
+## Bridge Resolution (v3.0)
 
-For workflows that combine bridge IDs, music albums, and type-filtered text in one batch — with automatic deduplication and optional edition-to-work pivoting — see `reconciler.Stage2`:
+For workflows that combine provider IDs, title/creator/year hints, Wikipedia identity, and edition-to-work rollups in one batch, use `reconciler.Bridge`:
 
 ```csharp
-var bridge = Stage2Request.Bridge(
-    correlationKey: "book-42",
-    bridgeIds: new Dictionary<string, string> { ["isbn13"] = "9780441172719" },
-    wikidataProperties: new Dictionary<string, string> { ["isbn13"] = "P212" },
-    editionPivot: new EditionPivotRule
+var requests = new[]
+{
+    new BridgeResolutionRequest
     {
-        WorkClasses = ["Q7725634"],
-        EditionClasses = ["Q3331189", "Q122731938"]
-    });
+        CorrelationKey = "book-42",
+        MediaKind = BridgeMediaKind.Book,
+        BridgeIds = new Dictionary<string, string> { ["isbn13"] = "9780441172719" },
+        Title = "Dune",
+        Creator = "Frank Herbert",
+        RollupTarget = BridgeRollupTarget.ReturnWorkAndEdition
+    }
+};
 
-var text = Stage2Request.Text("tv-12", "Breaking Bad", ["Q5398426"]);
-
-var results = await reconciler.Stage2.ResolveBatchAsync([bridge, text]);
+var results = await reconciler.Bridge.ResolveBatchAsync(requests);
+var result = results["book-42"];
+Console.WriteLine(result.SelectedCandidate?.Qid);
+Console.WriteLine(result.CanonicalWorkQid);
 ```
 
-As of v2.5.0, `MusicStage2Request.Artist` is resolved through `PersonsService` and `TextStage2Request.Author` is resolved through `AuthorsService`, so Stage 2 applies real QID constraints when the name resolution is confident.
-
-See the changelog and `docs/migrating-to-v2.md` for the full Stage 2 design.
+Bridge results include ranked candidates, reason codes, warnings, typed failures, rollup path, series/order metadata, relationship edges, and provider diagnostics.
 
 ## Direct QID Lookup
 

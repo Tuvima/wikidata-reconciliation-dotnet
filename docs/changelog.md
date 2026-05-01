@@ -1,5 +1,29 @@
 # Changelog
 
+## v3.0.0
+
+Breaking bridge/identity release.
+
+### Bridge API
+
+- Removed the public Stage2 compatibility layer: `WikidataReconciler.Stage2`, `Stage2Service`, `IStage2Request`, `BridgeStage2Request`, `MusicStage2Request`, `TextStage2Request`, `Stage2Request`, `Stage2Result`, and `Stage2MatchedStrategy`.
+- Added `WikidataReconciler.Bridge` with `ResolveAsync(BridgeResolutionRequest)` and `ResolveBatchAsync(IReadOnlyList<BridgeResolutionRequest>)`.
+- Added explainable bridge result models: `BridgeResolutionRequest`, `BridgeResolutionResult`, `BridgeCandidate`, `CanonicalRollup`, `BridgeSeriesInfo`, `BridgeRelationshipEdge`, and bridge status/strategy/rollup enums.
+- Added an internal bridge catalog and normalizers for Apple Books/Music/TV/iTunes, TMDB, IMDb, TVDB, ISBN, OpenLibrary, Google Books, MusicBrainz, ComicVine, Goodreads, ASIN, and caller-supplied custom Wikidata property keys.
+- Bridge resolution groups lookups by `(propertyId, normalizedValue)`, searches each unique external ID once, fetches candidate entities once, ranks locally, and fans results back by correlation key.
+
+### Rollups, relationships, and Wikipedia descriptions
+
+- Added P629 edition/release-to-work rollups and optional P747 work-to-edition discovery through `CanonicalRollup`.
+- Added structured series/order extraction from P179, P1545, P155, P156, P361, and P527.
+- Added relationship edges for series, universe, parent work, part, and has-part relationships with property IDs for auditability.
+- Added QID-based Wikipedia summary and structured description results with preferred-language fallback, clean no-sitelink/not-found outcomes, source provider, article URL, and language fields.
+
+### Migration
+
+- Consumers should replace Stage2 request factories with `BridgeResolutionRequest` and call `reconciler.Bridge.ResolveBatchAsync(...)`.
+- Non-Stage2 services remain: Reconcile, Entities, Wikipedia, Editions, Children, Authors, Labels, Persons, and graph APIs.
+
 ## v2.6.0
 
 Provider-safety release for high-volume ingestion.
