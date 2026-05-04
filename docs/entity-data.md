@@ -273,6 +273,24 @@ var manifest = await reconciler.Children.GetChildEntitiesAsync(new ChildEntityRe
 });
 ```
 
+## Series Manifest Retrieval (v3.0.1)
+
+For a full ordered manifest from a Wikidata series entity, use `reconciler.Series` instead of composing individual child traversals yourself:
+
+```csharp
+var manifest = await reconciler.Series.GetManifestAsync("Q19610143"); // The Expanse
+
+foreach (var item in manifest.Items)
+    Console.WriteLine($"{item.RawSeriesOrdinal}: {item.Label} ({item.OrderSource})");
+
+foreach (var warning in manifest.Warnings)
+    Console.WriteLine($"{warning.Code}: {warning.Message}");
+```
+
+The series service combines incoming P179, incoming P361, outgoing P527, optional P527 collection expansion, P1545 ordinal qualifiers, P155/P156 chains, and P577 publication dates. Wikidata coverage can be incomplete, so consumers should inspect `Warnings`, `Completeness`, `SourceProperties`, and `Relationships`.
+
+See [series-manifest.md](series-manifest.md) for request options, ordering confidence, and The Expanse example.
+
 ## Author Resolution & Pen Names (v2.0)
 
 Instead of fetching pseudonym claims directly, use the multi-author resolver which handles string splitting, "Last, First" detection, `et al.` markers, and pen-name lookup in one call:

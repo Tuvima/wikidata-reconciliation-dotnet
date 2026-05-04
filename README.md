@@ -28,6 +28,7 @@ This is the first .NET Wikidata reconciliation library, filling a gap in the eco
 | A prefix like "Doug..." | Autocomplete suggestions for interactive UIs |
 | A name with diacritics like "Shogun" | Matches regardless of accents with diacritic-insensitive mode |
 | A work like "Hitchhiker's Guide" | All editions and translations, filterable by type (audiobook, paperback, etc.) |
+| A series like "The Expanse" | An ordered manifest of works with provenance, ordering confidence, and warnings |
 | A query in Japanese and English | Multi-language search that finds the best match across both languages |
 | Cached entity data | Lightweight staleness check — only re-fetch what actually changed |
 | A set of related entities | Pathfinding, family trees, and cross-media entity detection via in-memory graph |
@@ -39,9 +40,9 @@ This is the first .NET Wikidata reconciliation library, filling a gap in the eco
 | [`Tuvima.Wikidata`](https://www.nuget.org/packages/Tuvima.Wikidata) | Core library — reconciliation, entity data, Wikipedia content, graph traversal |
 | [`Tuvima.Wikidata.AspNetCore`](https://www.nuget.org/packages/Tuvima.Wikidata.AspNetCore) | ASP.NET Core middleware for hosting a W3C Reconciliation Service API |
 
-Current release: `3.0.0`
+Current release: `3.0.1`
 
-Current validation: 108 offline unit tests plus the live integration suite.
+Current validation: 121 offline unit tests plus the live integration suite.
 
 ## Installation
 
@@ -98,6 +99,11 @@ Fetch structured entity data, Wikipedia summaries and sections, images, revision
 
 [Entity data guide](docs/entity-data.md) — entity fetching, Wikipedia content, staleness detection, edition discovery, child entities
 
+### Series Manifests
+Build ordered literary/media series manifests from Wikidata series entities using P179, P361, P527, P1545, P155, P156, and P577.
+
+[Series manifest guide](docs/series-manifest.md) â€” manifest retrieval, ordering confidence, provenance, warnings, and The Expanse example
+
 ### Graph Traversal
 Lightweight in-memory entity graph for pathfinding, family trees, cross-media detection, and subgraph extraction. Pure C# with adjacency lists — no RDF or SPARQL dependencies.
 
@@ -118,6 +124,21 @@ Tune scoring, language, type hierarchy, provider-safe host limits, response cach
 The reconciliation pipeline has four stages: dual search, entity fetching, weighted scoring, and type filtering.
 
 [Architecture overview](docs/architecture.md) — pipeline stages, internal components, design decisions
+
+## What's New in v3.0.1
+
+Patch release adding generic series manifest retrieval.
+
+- **`reconciler.Series.GetManifestAsync(...)`** builds an ordered Wikidata series manifest from a parent series QID.
+- **Multi-pattern discovery.** The service combines incoming P179, incoming P361, outgoing P527, and optional P527 collection expansion.
+- **Explainable ordering.** Items report whether ordering came from P1545 ordinals, P155/P156 chains, P577 publication dates, label fallback, or mixed evidence.
+- **Warnings and provenance.** Results expose source properties, collection parents, relationships, and warnings for incomplete or ambiguous Wikidata data.
+
+```csharp
+var manifest = await reconciler.Series.GetManifestAsync("Q19610143"); // The Expanse
+foreach (var item in manifest.Items)
+    Console.WriteLine($"{item.RawSeriesOrdinal}: {item.Label} ({item.OrderSource})");
+```
 
 ## What's New in v2.6.0
 

@@ -1,6 +1,6 @@
 # Architecture
 
-## Component Overview (v3.0.0+)
+## Component Overview (v3.0.1+)
 
 `WikidataReconciler` is a thin **facade** that owns a shared `ReconcilerContext` (HttpClient, options, collaborator instances, shared provider-safe HTTP pipeline, diagnostics, cache hook, and host limiters) and exposes focused **sub-services** as properties. Each sub-service owns a slice of the API surface and can be injected independently in DI without going through the facade.
 
@@ -14,7 +14,8 @@ WikidataReconciler (facade, owns ReconcilerContext)
 ├── Authors    → AuthorsService          multi-author split + pen-name resolution
 ├── Labels     → LabelsService           single + batch label lookup with fallback chain
 ├── Persons    → PersonsService          role-aware person search with occupation filtering  [v2.1]
-└── Bridge     → BridgeResolutionService bridge IDs, ranked identity candidates, rollups, relationships  [v3.0]
+|-- Bridge     -> BridgeResolutionService bridge IDs, ranked identity candidates, rollups, relationships  [v3.0]
+|-- Series     -> SeriesManifestService   ordered series manifests with provenance/warnings  [v3.0.1]
 
 Shared internals (Tuvima.Wikidata.Internal):
 ├── ReconcilerContext           <- shared state holder for facade and all sub-services
@@ -109,6 +110,8 @@ Wikipedia summaries use batched MediaWiki `action=query&prop=extracts|pageimages
 - **Graph module: no RDF** — the graph module uses adjacency lists and BFS, not RDF/SPARQL. The operations (pathfinding, family trees, cross-media detection) don't require a full graph database.
 - **Facade + sub-services (v2.0)** — the root `WikidataReconciler` is a thin facade over nine focused sub-services. The shared `ReconcilerContext` ensures all services use the same HttpClient, options, HTTP pipeline, diagnostics, cache hook, and host limiters. Sub-services are constructed once at facade init and exposed as properties; they are also registered individually by `AddWikidataReconciliation()` so DI consumers can inject a narrow slice.
 - **Bridge resolution (v3.0)** — the old public Stage2 request hierarchy was removed. `BridgeResolutionService` accepts one `BridgeResolutionRequest` shape with bridge IDs, media kind, title/creator/year hints, and rollup target; it returns ranked candidates, typed failure state, diagnostics, relationship edges, and canonical rollup details.
+
+- **Series manifests (v3.0.1)** â€” `SeriesManifestService` builds factual ordered manifests from P179, P361, P527, P1545, P155, P156, and P577 without SPARQL or product/UI assumptions. Results include ordering evidence, source properties, relationship provenance, and warnings for incomplete or ambiguous Wikidata data.
 
 ## Wikidata API Endpoints Used
 

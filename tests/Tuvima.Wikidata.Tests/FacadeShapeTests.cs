@@ -18,6 +18,7 @@ public class FacadeShapeTests
         Assert.NotNull(reconciler.Children);
         Assert.NotNull(reconciler.Authors);
         Assert.NotNull(reconciler.Labels);
+        Assert.NotNull(reconciler.Series);
     }
 
     [Fact]

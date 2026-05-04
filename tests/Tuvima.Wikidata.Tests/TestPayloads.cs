@@ -4,6 +4,13 @@ namespace Tuvima.Wikidata.Tests;
 
 internal static class TestPayloads
 {
+    public sealed record ClaimSpec(
+        string PropertyId,
+        string DataType,
+        object DataValue,
+        string Rank,
+        Dictionary<string, object>? Qualifiers = null);
+
     public static WikidataReconciler CreateReconciler(TestHttpMessageHandler handler)
     {
         return new WikidataReconciler(CreateHttpClient(handler), new WikidataReconcilerOptions
@@ -133,6 +140,51 @@ internal static class TestPayloads
                 }).ToList());
     }
 
+    public static Dictionary<string, object> ClaimsWithQualifiers(params ClaimSpec[] values)
+    {
+        return values
+            .GroupBy(value => value.PropertyId)
+            .ToDictionary(
+                group => group.Key,
+                group => (object)group.Select(value => new
+                {
+                    mainsnak = new
+                    {
+                        snaktype = "value",
+                        property = value.PropertyId,
+                        datavalue = value.DataValue,
+                        datatype = value.DataType
+                    },
+                    rank = value.Rank,
+                    qualifiers = value.Qualifiers,
+                    qualifiers_order = value.Qualifiers?.Keys.ToList()
+                }).ToList());
+    }
+
+    public static ClaimSpec Claim(
+        string propertyId,
+        string dataType,
+        object dataValue,
+        string rank = "normal",
+        Dictionary<string, object>? qualifiers = null)
+        => new(propertyId, dataType, dataValue, rank, qualifiers);
+
+    public static Dictionary<string, object> Qualifiers(
+        params (string PropertyId, string DataType, object DataValue)[] values)
+    {
+        return values
+            .GroupBy(value => value.PropertyId)
+            .ToDictionary(
+                group => group.Key,
+                group => (object)group.Select(value => new
+                {
+                    snaktype = "value",
+                    property = value.PropertyId,
+                    datavalue = value.DataValue,
+                    datatype = value.DataType
+                }).ToList());
+    }
+
     public static object ItemDataValue(string qid)
         => new
         {
@@ -145,5 +197,20 @@ internal static class TestPayloads
         {
             value,
             type = "string"
+        };
+
+    public static object TimeDataValue(string time, int precision = 11)
+        => new
+        {
+            value = new
+            {
+                time,
+                precision,
+                timezone = 0,
+                before = 0,
+                after = 0,
+                calendarmodel = "http://www.wikidata.org/entity/Q1985727"
+            },
+            type = "time"
         };
 }

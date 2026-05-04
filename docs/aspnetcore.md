@@ -24,6 +24,7 @@ As of v2.0, `AddWikidataReconciliation` also registers each **sub-service** as a
 public sealed class MyEntityPipeline(
     Tuvima.Wikidata.Services.LabelsService labels,
     Tuvima.Wikidata.Services.AuthorsService authors,
+    Tuvima.Wikidata.Services.SeriesManifestService series,
     Tuvima.Wikidata.Services.BridgeResolutionService bridge)
 {
     public async Task<string?> ResolveBookAsync(string isbn)
@@ -41,7 +42,7 @@ public sealed class MyEntityPipeline(
 }
 ```
 
-All focused sub-services (`ReconciliationService`, `EntityService`, `WikipediaService`, `EditionService`, `ChildrenService`, `AuthorsService`, `LabelsService`, `PersonsService`, `BridgeResolutionService`) resolve from the same root `WikidataReconciler`, so they share the same `HttpClient`, options, provider-safe HTTP pipeline, cache hook, diagnostics object, and host limiters.
+All focused sub-services (`ReconciliationService`, `EntityService`, `WikipediaService`, `EditionService`, `ChildrenService`, `AuthorsService`, `LabelsService`, `PersonsService`, `SeriesManifestService`, `BridgeResolutionService`) resolve from the same root `WikidataReconciler`, so they share the same `HttpClient`, options, provider-safe HTTP pipeline, cache hook, diagnostics object, and host limiters.
 
 ## Endpoint Mapping
 
@@ -93,6 +94,7 @@ services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Reconcil
 services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Entities);
 services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Labels);
 services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Authors);
+services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Series);
 services.AddSingleton(sp => sp.GetRequiredService<WikidataReconciler>().Bridge);
 // …plus Wikipedia, Editions, Children, Persons as needed
 ```

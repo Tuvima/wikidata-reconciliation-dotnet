@@ -8,7 +8,7 @@ Two NuGet packages:
 - `Tuvima.Wikidata` — core library, zero external dependencies
 - `Tuvima.Wikidata.AspNetCore` — W3C Reconciliation API middleware for ASP.NET Core
 
-## Architecture (v3.0.0)
+## Architecture (v3.0.1)
 
 `WikidataReconciler` is a thin **facade** that owns a shared `ReconcilerContext` (HttpClient, options, search/fetcher/scorer/type-checker collaborators, shared provider-safe HTTP pipeline, response cache hook, diagnostics, and per-host limiters) and exposes focused **sub-services** as properties:
 
@@ -22,7 +22,8 @@ WikidataReconciler (facade, owns ReconcilerContext)
 ├── Authors      → AuthorsService          (multi-author split + pen-name resolution)
 ├── Labels       → LabelsService           (single + batch label lookup with fallback chain)
 ├── Persons      → PersonsService          (role-aware person search with occupation filtering, year/work hints, group expansion)  [v2.1]
-└── Bridge       → BridgeResolutionService (bridge IDs, ranked candidates, canonical rollups, relationships, diagnostics)  [v3.0]
+|-- Bridge       -> BridgeResolutionService (bridge IDs, ranked candidates, canonical rollups, relationships, diagnostics)  [v3.0]
+|-- Series       -> SeriesManifestService   (ordered series manifests, provenance, warnings)  [v3.0.1]
 
 Shared internals (Tuvima.Wikidata.Internal):
 ├── ReconcilerContext           <- shared state for all sub-services
@@ -63,7 +64,7 @@ All v1 top-level methods on `WikidataReconciler` remain as delegating shims forw
 ```
 src/
 ├── Tuvima.Wikidata/                         # Core library
-│   ├── WikidataReconciler.cs                # Facade — owns ReconcilerContext, exposes 9 sub-services
+│   ├── WikidataReconciler.cs                # Facade — owns ReconcilerContext, exposes 10 sub-services
 │   ├── Direction.cs                         # Enum: Outgoing, Incoming (shared with Graph module)
 │   ├── WikidataReconcilerOptions.cs         # Configuration: scoring, language, host rate limits, retry/cache/diagnostics
 │   ├── ProviderRateLimitOptions.cs          # Per-host MaxConcurrentRequests, RequestsPerSecond, MaxBatchSize
@@ -100,6 +101,13 @@ src/
 │   ├── PersonRole.cs                        # Enum for Persons.SearchAsync: Author|Narrator|Director|Actor|VoiceActor|Composer|Performer|Artist|Screenwriter (v2.1)
 │   ├── PersonSearchRequest.cs               # Persons.SearchAsync input: Name, Role, TitleHint, WorkQid, IncludeMusicalGroups, BirthYearHint, DeathYearHint, CompanionNameHints, ExpandGroupMembers, AcceptThreshold (v2.1)
 │   ├── PersonSearchResult.cs                # Persons.SearchAsync output: Found, Qid, CanonicalName, IsGroup, Score, Occupations, NotableWorks, GroupMembers (v2.1)
+│   ├── SeriesManifestRequest.cs             # Series manifest input: SeriesQid, language, collection expansion, caps (v3.0.1)
+│   ├── SeriesManifestResult.cs              # Ordered manifest output with items, warnings, completeness (v3.0.1)
+│   ├── SeriesManifestItem.cs                # Per-work row with ordinal/date/chain evidence and provenance (v3.0.1)
+│   ├── SeriesManifestRelationship.cs        # Relationship evidence for why a manifest item was included (v3.0.1)
+│   ├── SeriesManifestWarning.cs             # Non-fatal series data warnings (v3.0.1)
+│   ├── SeriesManifestOrderSource.cs         # Ordering source enum (v3.0.1)
+│   ├── SeriesManifestCompleteness.cs        # Manifest completeness enum (v3.0.1)
 │   ├── BridgeResolutionRequest.cs           # High-level bridge/identity request (v3.0)
 │   ├── BridgeResolutionResult.cs            # One result per input with selected/ranked candidates, failure, diagnostics (v3.0)
 │   ├── BridgeCandidate.cs                   # Ranked candidate shape with QID, labels, matched property, confidence, reasons (v3.0)
@@ -118,6 +126,7 @@ src/
 │   │   ├── AuthorsService.cs                # ResolveAsync — multi-author split + pen-name detection
 │   │   ├── LabelsService.cs                 # GetAsync, GetBatchAsync with language fallback
 │   │   ├── PersonsService.cs                # SearchAsync — role-aware person search (v2.1)
+│   │   ├── SeriesManifestService.cs         # GetManifestAsync ordered series manifests (v3.0.1)
 │   │   ├── BridgeResolutionService.cs       # ResolveAsync / ResolveBatchAsync high-level identity bridge (v3.0)
 │   ├── Graph/                               # Entity graph traversal module
 │   │   ├── EntityGraph.cs                   # Core graph class — adjacency lists, BFS pathfinding, family trees
@@ -168,11 +177,14 @@ tests/
     ├── LanguageFallbackTests.cs             # Unit tests for language fallback
     ├── ResilienceAndStage2Tests.cs          # Unit tests for cancellation and pagination
     ├── BridgeResolutionServiceTests.cs      # Unit tests for bridge batching, ranking, rollups, and Wikipedia summary failures
+    ├── SeriesManifestServiceTests.cs        # Unit tests for series discovery, ordering, provenance, warnings
+    ├── SeriesManifestIntegrationTests.cs    # Live The Expanse series manifest shape test
     ├── TestHttpMessageHandler.cs            # Test HTTP shim for deterministic service tests
     └── TestPayloads.cs                      # Shared JSON payload builders for service tests
 docs/
 ├── reconciliation.md                        # Reconciliation usage guide
 ├── entity-data.md                           # Entity data & Wikipedia content guide
+├── series-manifest.md                       # Series manifest retrieval guide
 ├── graph.md                                 # Graph module guide
 ├── aspnetcore.md                            # ASP.NET Core integration guide
 ├── configuration.md                         # Configuration options guide
@@ -268,6 +280,19 @@ Key design notes:
 - Results include selected/ranked candidates, typed success/failure, reason codes, warnings, provider diagnostics, canonical P629/P747 rollup path, series/order data, and relationship edges.
 - Tuvima.Wikidata does not call retail APIs; it only uses supplied bridge identifiers as Wikidata external-ID values.
 
+### `reconciler.Series` — `SeriesManifestService` (v3.0.1)
+
+| Method | Purpose |
+|---|---|
+| `GetManifestAsync(seriesQid)` | Builds an ordered manifest from a Wikidata series QID using default options. |
+| `GetManifestAsync(SeriesManifestRequest)` | Full options: language, include/expand collections, publication dates, descriptions, max depth, and max items. |
+
+Key design notes:
+- Combines incoming P179, incoming P361, outgoing P527, and optional P527 collection expansion.
+- Orders by P1545 series ordinal, then P155/P156 chain, then P577 publication date, then label fallback.
+- Preserves raw and parsed decimal ordinals, source properties, relationship provenance, collection parents, warnings, and completeness.
+- The library stays factual and does not decide owned/missing UI behavior.
+
 ### `reconciler.Diagnostics` — `WikidataDiagnostics` (v2.6)
 
 | Method | Purpose |
@@ -352,7 +377,7 @@ dotnet test
 dotnet pack --configuration Release
 ```
 
-Test counts: 113 unit tests + 80 integration tests = 193 total.
+Test counts: 121 offline tests + 77 integration tests = 198 total.
 
 ## Key Design Decisions
 

@@ -6,7 +6,7 @@ namespace Tuvima.Wikidata;
 /// <summary>
 /// Facade for the Tuvima.Wikidata library. Exposes focused sub-services:
 /// <see cref="Reconcile"/>, <see cref="Entities"/>, <see cref="Wikipedia"/>,
-/// <see cref="Editions"/>, <see cref="Children"/>, <see cref="Authors"/>, <see cref="Labels"/>, <see cref="Bridge"/>.
+/// <see cref="Editions"/>, <see cref="Children"/>, <see cref="Authors"/>, <see cref="Labels"/>, <see cref="Series"/>, <see cref="Bridge"/>.
 /// <para>
 /// Top-level methods on this class remain as thin delegates to their owning sub-service
 /// for source-compat with v1 call sites; new code should prefer calling the sub-services directly.
@@ -41,6 +41,9 @@ public sealed class WikidataReconciler : IDisposable
     /// <summary>Role-aware person search (humans + musical groups) with occupation filtering and year/work hints.</summary>
     public PersonsService Persons { get; }
 
+    /// <summary>Generic Wikidata series manifest retrieval and ordering.</summary>
+    public SeriesManifestService Series { get; }
+
     /// <summary>High-level bridge and identity resolution.</summary>
     public BridgeResolutionService Bridge { get; }
 
@@ -72,6 +75,7 @@ public sealed class WikidataReconciler : IDisposable
         Authors = new AuthorsService(_context, Reconcile);
         Labels = new LabelsService(_context);
         Persons = new PersonsService(_context, Reconcile, Labels);
+        Series = new SeriesManifestService(_context);
         Bridge = new BridgeResolutionService(_context, Reconcile);
     }
 

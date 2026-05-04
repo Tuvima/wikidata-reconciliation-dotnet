@@ -1,5 +1,16 @@
 # Changelog
 
+## v3.0.1
+
+Patch release adding generic series manifest retrieval.
+
+- Added `WikidataReconciler.Series` with `SeriesManifestService.GetManifestAsync(...)`.
+- Added public manifest DTOs for request options, ordered items, relationship provenance, warnings, ordering source, and completeness.
+- Series manifests combine incoming P179, incoming P361, outgoing P527, and optional P527 collection expansion.
+- Ordering uses P1545 series ordinals first, then P155/P156 chains, P577 publication dates, and label fallback.
+- Added warnings for missing/conflicting ordinals, broken previous/next chains, max-depth/max-item truncation, duplicates, and label-only fallback sorting.
+- Added offline tests for series discovery, ordering, provenance, warnings, decimal ordinals, collection expansion, and truncation behavior, plus a live The Expanse shape test.
+
 ## v3.0.0
 
 Breaking bridge/identity release.
