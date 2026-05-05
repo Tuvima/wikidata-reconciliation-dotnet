@@ -111,7 +111,7 @@ Wikipedia summaries use batched MediaWiki `action=query&prop=extracts|pageimages
 - **Facade + sub-services (v2.0)** — the root `WikidataReconciler` is a thin facade over nine focused sub-services. The shared `ReconcilerContext` ensures all services use the same HttpClient, options, HTTP pipeline, diagnostics, cache hook, and host limiters. Sub-services are constructed once at facade init and exposed as properties; they are also registered individually by `AddWikidataReconciliation()` so DI consumers can inject a narrow slice.
 - **Bridge resolution (v3.0)** — the old public Stage2 request hierarchy was removed. `BridgeResolutionService` accepts one `BridgeResolutionRequest` shape with bridge IDs, media kind, title/creator/year hints, and rollup target; it returns ranked candidates, typed failure state, diagnostics, relationship edges, and canonical rollup details.
 
-- **Series manifests (v3.0.1)** â€” `SeriesManifestService` builds factual ordered manifests from P179, P361, P527, P1545, P155, P156, and P577 without SPARQL or product/UI assumptions. Results include ordering evidence, source properties, relationship provenance, and warnings for incomplete or ambiguous Wikidata data.
+- **Series manifests (v3.0.2)** â€” `SeriesManifestService` builds factual ordered manifests from P179, P361, P8345, P527, P1545, P155, P156, and P577 without SPARQL or product/UI assumptions. Results include ordering evidence, source properties, relationship provenance, and warnings for incomplete or ambiguous Wikidata data.
 
 ## Wikidata API Endpoints Used
 

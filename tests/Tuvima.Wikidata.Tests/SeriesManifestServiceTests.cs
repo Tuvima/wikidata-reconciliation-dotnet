@@ -45,6 +45,26 @@ public class SeriesManifestServiceTests
     }
 
     [Fact]
+    public async Task GetManifestAsync_IncomingP8345_FindsFranchiseMembersAndOrdersByChain()
+    {
+        using var reconciler = CreateReconciler(
+            new()
+            {
+                ["QSeries"] = Entity("QSeries", "Film Franchise"),
+                ["Q1"] = Entity("Q1", "First Film", Claims(ItemClaim("P8345", "QSeries"), ItemClaim("P156", "Q2"))),
+                ["Q2"] = Entity("Q2", "Second Film", Claims(ItemClaim("P8345", "QSeries"), ItemClaim("P155", "Q1")))
+            },
+            p8345: ["Q2", "Q1"]);
+
+        var manifest = await reconciler.Series.GetManifestAsync("QSeries");
+
+        Assert.Equal(["Q1", "Q2"], manifest.Items.Select(i => i.Qid));
+        Assert.All(manifest.Items, item => Assert.Contains("P8345", item.SourceProperties));
+        Assert.Contains(manifest.Items[0].Relationships, r => r.PropertyId == "P8345" && r.TargetQid == "QSeries" && r.Direction == "Outgoing");
+        Assert.All(manifest.Items, item => Assert.Equal(SeriesManifestOrderSource.PreviousNextChain, item.OrderSource));
+    }
+
+    [Fact]
     public async Task GetManifestAsync_OutgoingP527_UsesParentStatementOrdinal()
     {
         using var reconciler = CreateReconciler(
@@ -266,7 +286,8 @@ public class SeriesManifestServiceTests
     private static WikidataReconciler CreateReconciler(
         Dictionary<string, Dictionary<string, object?>> entities,
         IReadOnlyList<string>? p179 = null,
-        IReadOnlyList<string>? p361 = null)
+        IReadOnlyList<string>? p361 = null,
+        IReadOnlyList<string>? p8345 = null)
     {
         var handler = new TestHttpMessageHandler((request, _) =>
         {
@@ -278,6 +299,8 @@ public class SeriesManifestServiceTests
                     return Task.FromResult(TestHttpMessageHandler.Json(TestPayloads.QueryResponse((p179 ?? []).ToArray())));
                 if (uri.Contains("haswbstatement:P361=QSeries", StringComparison.OrdinalIgnoreCase))
                     return Task.FromResult(TestHttpMessageHandler.Json(TestPayloads.QueryResponse((p361 ?? []).ToArray())));
+                if (uri.Contains("haswbstatement:P8345=QSeries", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(TestHttpMessageHandler.Json(TestPayloads.QueryResponse((p8345 ?? []).ToArray())));
             }
 
             if (uri.Contains("action=wbgetentities", StringComparison.OrdinalIgnoreCase))

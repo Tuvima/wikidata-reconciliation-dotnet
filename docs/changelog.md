@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.0.2
+
+Patch release improving film-franchise manifest discovery.
+
+- Series manifests now discover incoming P8345 franchise members, which lets film franchises such as Blade Runner produce ordered manifests when Wikidata models the group as a franchise instead of a P179 series.
+
 ## v3.0.1
 
 Patch release adding generic series manifest retrieval.

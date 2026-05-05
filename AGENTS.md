@@ -288,7 +288,7 @@ Key design notes:
 | `GetManifestAsync(SeriesManifestRequest)` | Full options: language, include/expand collections, publication dates, descriptions, max depth, and max items. |
 
 Key design notes:
-- Combines incoming P179, incoming P361, outgoing P527, and optional P527 collection expansion.
+- Combines incoming P179, incoming P361, incoming P8345, outgoing P527, and optional P527 collection expansion.
 - Orders by P1545 series ordinal, then P155/P156 chain, then P577 publication date, then label fallback.
 - Preserves raw and parsed decimal ordinals, source properties, relationship provenance, collection parents, warnings, and completeness.
 - The library stays factual and does not decide owned/missing UI behavior.

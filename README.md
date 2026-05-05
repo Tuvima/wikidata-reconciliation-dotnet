@@ -100,7 +100,7 @@ Fetch structured entity data, Wikipedia summaries and sections, images, revision
 [Entity data guide](docs/entity-data.md) — entity fetching, Wikipedia content, staleness detection, edition discovery, child entities
 
 ### Series Manifests
-Build ordered literary/media series manifests from Wikidata series entities using P179, P361, P527, P1545, P155, P156, and P577.
+Build ordered literary/media series manifests from Wikidata series and franchise entities using P179, P361, P8345, P527, P1545, P155, P156, and P577.
 
 [Series manifest guide](docs/series-manifest.md) â€” manifest retrieval, ordering confidence, provenance, warnings, and The Expanse example
 
@@ -130,7 +130,7 @@ The reconciliation pipeline has four stages: dual search, entity fetching, weigh
 Patch release adding generic series manifest retrieval.
 
 - **`reconciler.Series.GetManifestAsync(...)`** builds an ordered Wikidata series manifest from a parent series QID.
-- **Multi-pattern discovery.** The service combines incoming P179, incoming P361, outgoing P527, and optional P527 collection expansion.
+- **Multi-pattern discovery.** The service combines incoming P179, incoming P361, incoming P8345, outgoing P527, and optional P527 collection expansion.
 - **Explainable ordering.** Items report whether ordering came from P1545 ordinals, P155/P156 chains, P577 publication dates, label fallback, or mixed evidence.
 - **Warnings and provenance.** Results expose source properties, collection parents, relationships, and warnings for incomplete or ambiguous Wikidata data.
 

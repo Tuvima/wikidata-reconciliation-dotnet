@@ -12,12 +12,13 @@ public sealed class SeriesManifestService
     private const string PartOfSeries = "P179";
     private const string PartOf = "P361";
     private const string HasPart = "P527";
+    private const string Franchise = "P8345";
     private const string SeriesOrdinal = "P1545";
     private const string Follows = "P155";
     private const string FollowedBy = "P156";
     private const string PublicationDate = "P577";
 
-    private static readonly string[] RelationshipProperties = [PartOfSeries, PartOf, Follows, FollowedBy, HasPart];
+    private static readonly string[] RelationshipProperties = [PartOfSeries, PartOf, Franchise, Follows, FollowedBy, HasPart];
 
     private readonly ReconcilerContext _ctx;
 
@@ -63,14 +64,21 @@ public sealed class SeriesManifestService
             $"haswbstatement:{PartOf}={request.SeriesQid}",
             typeFilter: null,
             cancellationToken);
+        var p8345Task = _ctx.SearchClient.SearchAllByStatementAsync(
+            $"haswbstatement:{Franchise}={request.SeriesQid}",
+            typeFilter: null,
+            cancellationToken);
 
-        await Task.WhenAll(p179Task, p361Task).ConfigureAwait(false);
+        await Task.WhenAll(p179Task, p361Task, p8345Task).ConfigureAwait(false);
 
         foreach (var qid in await p179Task.ConfigureAwait(false))
             AddDiscovery(discovered, pendingFetch, qid, PartOfSeries, request.SeriesQid, null, null, null, warnings);
 
         foreach (var qid in await p361Task.ConfigureAwait(false))
             AddDiscovery(discovered, pendingFetch, qid, PartOf, request.SeriesQid, null, null, null, warnings);
+
+        foreach (var qid in await p8345Task.ConfigureAwait(false))
+            AddDiscovery(discovered, pendingFetch, qid, Franchise, request.SeriesQid, null, null, null, warnings);
 
         if (seriesEntity is not null)
         {
@@ -316,7 +324,7 @@ public sealed class SeriesManifestService
             {
                 foreach (var targetQid in GetEntityIds(entity, propertyId))
                 {
-                    if (propertyId is PartOfSeries or PartOf or Follows or FollowedBy)
+                    if (propertyId is PartOfSeries or PartOf or Franchise or Follows or FollowedBy)
                     {
                         item.Relationships.Add(new RelationshipEvidence(propertyId, targetQid, "Outgoing"));
                     }
